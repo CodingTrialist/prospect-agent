@@ -40,6 +40,32 @@ The PWA pieces are checked in rather than generated:
 
 Serve over HTTPS in production; installability requires a secure context.
 
+## Deploying to GitHub Pages
+
+`.github/workflows/deploy-pages.yml` builds and publishes `dist/` on every push
+to the default branch, and can be run manually from the Actions tab. The live
+site is <https://sivarajh.github.io/prospect-agent/>.
+
+Pages serves project sites from `/<repo>/` rather than the domain root, which is
+why a few things are written the way they are:
+
+- `app.config.js` reads `EXPO_WEB_BASE_URL` and sets `experiments.baseUrl`, so
+  the injected `<script src>` gets the `/prospect-agent` prefix. The workflow
+  passes `base_path` from `actions/configure-pages`, so moving to a custom
+  domain or a user site needs no code change — the value becomes empty.
+- Every URL in `public/index.html`, `public/manifest.json`, and `public/sw.js`
+  is **relative**. An absolute `/manifest.json` resolves to the domain root and
+  404s. The same files work unchanged at the root, which is what `npm run
+  serve:web` exercises.
+- The workflow writes `.nojekyll` into the artifact. Pages runs Jekyll by
+  default, and Jekyll drops directories beginning with an underscore — without
+  this the whole `_expo/` bundle 404s.
+- It also copies `index.html` to `404.html`, so a direct hit on an unknown path
+  still lands on the app shell.
+
+Note that Pages on a public repo is a **public URL**. The seed data is
+fictional, but treat the deployment as world-readable — see the closing section.
+
 ## Why Expo rather than plain React Native
 
 React Native alone compiles to native binaries — it cannot produce a PWA. Expo

@@ -8,9 +8,11 @@
 
     <!-- PWA. Expo SDK 50+ no longer generates a web manifest, so this one is
          checked in at public/manifest.json and kept in sync with app.json. -->
-    <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <!-- Relative, not absolute: GitHub Pages serves this from /<repo>/, and an
+         absolute href would resolve to the domain root and 404. -->
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Prospects" />

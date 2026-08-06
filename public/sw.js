@@ -1,7 +1,11 @@
 // Minimal app-shell service worker. Expo SDK 50+ does not generate one.
 // Bump CACHE_VERSION on every deploy so clients pick up new bundles.
 const CACHE_VERSION = 'prospect-triage-v1';
-const SHELL = ['/', '/index.html', '/manifest.json', '/icon-192.png', '/icon-512.png'];
+
+// Relative to this script's own URL, so the same worker works whether the app
+// is served from the domain root or from a GitHub Pages /<repo>/ subpath.
+const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
+const INDEX_URL = new URL('./index.html', self.location.href).href;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -44,7 +48,7 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_VERSION).then((c) => c.put(request, copy));
           return res;
         })
-        .catch(() => caches.match('/index.html')),
+        .catch(() => caches.match(INDEX_URL)),
     );
     return;
   }

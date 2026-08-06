@@ -6,8 +6,11 @@ export function registerServiceWorker() {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
 
   const register = () => {
+    // Resolved against the document, not the domain root: on GitHub Pages the
+    // app lives at /<repo>/, and '/sw.js' would point outside its own scope.
+    const swUrl = new URL('sw.js', document.baseURI).href;
     navigator.serviceWorker
-      .register('/sw.js')
+      .register(swUrl)
       .catch((err) => console.warn('Service worker registration failed', err));
   };
 
