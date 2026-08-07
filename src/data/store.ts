@@ -12,6 +12,9 @@ type Decision = {
   status: ProspectStatus;
   assignedTo?: string;
   snoozedUntil?: number;
+  snoozeRuleLabel?: string;
+  /** Kept because the pass reason is the match model's only feedback signal. */
+  decisionReason?: string;
 };
 
 type Saved = Record<string, Decision>;
@@ -29,6 +32,8 @@ const toDecisions = (list: Prospect[]): Saved =>
         status: p.status,
         assignedTo: p.assignedTo,
         snoozedUntil: p.snoozedUntil,
+        snoozeRuleLabel: p.snoozeRuleLabel,
+        decisionReason: p.decisionReason,
       };
     }
     return acc;

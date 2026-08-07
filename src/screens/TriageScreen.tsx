@@ -14,9 +14,22 @@ import { Header, Mode } from '../components/Header';
 import { ProspectCard } from '../components/ProspectCard';
 import { ActionBar } from '../components/ActionBar';
 import { JamieSheet } from '../components/JamieSheet';
-import { Prospect, SNOOZE_DAYS, SNOOZE_MS } from '../data/prospects';
+import { ReasonSheet, ReasonResult } from '../components/ReasonSheet';
+import { ActivityLog } from '../components/ActivityLog';
+import { Prospect, primaryTrigger } from '../data/prospects';
+import { resolveSnooze } from '../data/decisions';
 import { loadProspects, resetProspects, saveProspects } from '../data/store';
+import {
+  Activity,
+  NewActivity,
+  clearActivities,
+  loadActivities,
+  logActivity,
+  pendingCount,
+  retryFailedSyncs,
+} from '../data/activity';
 import { colors, font, radius } from '../theme';
+import { money } from '../format';
 
 const SWIPE_THRESHOLD = 90;
 const SLIDE_MS = 160;
@@ -25,12 +38,19 @@ const SLIDE_MS = 160;
 const isSnoozed = (p: Prospect, now: number) =>
   p.status === 'snoozed' && (p.snoozedUntil ?? 0) > now;
 
+/** Urgency, not score: a three-week-old round beats a higher-scoring stale one. */
+const byTriggerRecency = (a: Prospect, b: Prospect) =>
+  (primaryTrigger(b)?.date ?? 0) - (primaryTrigger(a)?.date ?? 0);
+
 export default function TriageScreen() {
   const { width } = useWindowDimensions();
   const [mode, setMode] = useState<Mode>('manager');
   const [items, setItems] = useState<Prospect[] | null>(null);
+  const [activities, setActivities] = useState<Activity[]>([]);
   const [index, setIndex] = useState(0);
   const [jamieOpen, setJamieOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [reasonMode, setReasonMode] = useState<'snooze' | 'remove' | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const pan = useRef(new Animated.Value(0)).current;
@@ -38,6 +58,7 @@ export default function TriageScreen() {
 
   useEffect(() => {
     loadProspects().then(setItems);
+    loadActivities().then(setActivities);
     return () => {
       if (toastTimer.current) clearTimeout(toastTimer.current);
     };
@@ -53,22 +74,35 @@ export default function TriageScreen() {
     });
   }, []);
 
+  const record = useCallback((entry: NewActivity) => {
+    void logActivity(entry).then(setActivities);
+  }, []);
+
   const list = items ?? [];
-  const now = Date.now();
 
   // Manager triages what hasn't been acted on; Banker acts on what was assigned.
   // Overlapping these two sets is what made Assign look like a no-op before.
-  const queue = useMemo(
-    () =>
-      list.filter((p) =>
+  //
+  // `Date.now()` is read inside the memo rather than passed in: as a dependency
+  // it changes every render and the memo never hits. The cost is that a snooze
+  // expiring mid-session surfaces on the next action rather than on a timer,
+  // which is the right trade for a queue that is re-derived on every keystroke
+  // in a draft.
+  const queue = useMemo(() => {
+    const now = Date.now();
+    return list
+      .filter((p) =>
         mode === 'manager'
           ? (p.status === 'new' || p.status === 'snoozed') && !isSnoozed(p, now)
           : p.status === 'assigned',
-      ),
-    [list, mode, now],
-  );
+      )
+      .sort(byTriggerRecency);
+  }, [list, mode]);
 
-  const snoozedCount = list.filter((p) => isSnoozed(p, now)).length;
+  const snoozedCount = useMemo(() => {
+    const now = Date.now();
+    return list.filter((p) => isSnoozed(p, now)).length;
+  }, [list]);
 
   // Clamp rather than wrap, so a queue that shrank under us lands on a real card.
   const safeIndex = queue.length ? Math.min(index, queue.length - 1) : 0;
@@ -77,7 +111,7 @@ export default function TriageScreen() {
   const flash = (msg: string) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast(msg);
-    toastTimer.current = setTimeout(() => setToast(null), 2200);
+    toastTimer.current = setTimeout(() => setToast(null), 2600);
   };
 
   /**
@@ -116,11 +150,16 @@ export default function TriageScreen() {
    * For actions that pull the current card out of the queue: the next prospect
    * slides into the same index, so advancing the index too would skip a card.
    */
-  const consume = (mutate: (p: Prospect) => Partial<Prospect>, message: (p: Prospect) => string) => {
+  const consume = (
+    mutate: (p: Prospect) => Partial<Prospect>,
+    message: (p: Prospect) => string,
+    activity?: (p: Prospect) => NewActivity,
+  ) => {
     if (!current) return;
     const target = current;
     slide(-1, () => {
       update((l) => l.map((p) => (p.id === target.id ? { ...p, ...mutate(p) } : p)));
+      if (activity) record(activity(target));
       flash(message(target));
     });
   };
@@ -131,34 +170,102 @@ export default function TriageScreen() {
     consume(
       () => ({ status: 'assigned', assignedTo: bankerId, snoozedUntil: undefined }),
       (p) => `${p.company} assigned to ${banker?.name ?? 'banker'} — see Banker View`,
+      (p) => ({
+        kind: 'assigned',
+        prospectId: p.id,
+        company: p.company,
+        summary: `Assigned to ${banker?.name ?? bankerId}. Est. ${money(p.opportunity.estDepositsUsd)} deposits.`,
+      }),
     );
   };
 
-  const onSnooze = () =>
+  const onSnoozeConfirmed = (result: Extract<ReasonResult, { kind: 'snooze' }>) => {
+    const { until, label } = resolveSnooze(result.rule);
+    setReasonMode(null);
     consume(
-      () => ({ status: 'snoozed', snoozedUntil: Date.now() + SNOOZE_MS }),
-      (p) => `${p.company} snoozed for ${SNOOZE_DAYS} days`,
+      () => ({
+        status: 'snoozed',
+        snoozedUntil: until,
+        snoozeRuleLabel: label,
+        decisionReason: result.note,
+      }),
+      (p) => `${p.company} snoozed — ${label.toLowerCase()}`,
+      (p) => ({
+        kind: 'snoozed',
+        prospectId: p.id,
+        company: p.company,
+        summary: `Snoozed: ${label}${result.rule.watchEvent ? ` (watching ${result.rule.watchEvent})` : ''}`,
+        reason: result.note,
+      }),
     );
+  };
 
-  const onRemove = () =>
+  const onRemoveConfirmed = (result: Extract<ReasonResult, { kind: 'remove' }>) => {
+    setReasonMode(null);
     consume(
-      () => ({ status: 'removed', snoozedUntil: undefined }),
-      (p) => `${p.company} removed from the queue`,
+      () => ({ status: 'removed', snoozedUntil: undefined, decisionReason: result.reasonLabel }),
+      (p) => `${p.company} removed — ${result.reasonLabel.toLowerCase()}`,
+      (p) => ({
+        kind: 'removed',
+        prospectId: p.id,
+        company: p.company,
+        summary: `Removed from queue. This feeds the match model.`,
+        reason: result.note ? `${result.reasonLabel} — ${result.note}` : result.reasonLabel,
+      }),
     );
+  };
+
+  const onSendIntro = (body: string, recipient: string) => {
+    if (!current) return;
+    record({
+      kind: 'intro_requested',
+      prospectId: current.id,
+      company: current.company,
+      summary: `Introduction requested from ${recipient}`,
+      recipient,
+      body,
+    });
+    flash(`Intro request sent to ${recipient}`);
+  };
+
+  const onSendEmail = (body: string, recipient: string, subject: string) => {
+    if (!current) return;
+    record({
+      kind: 'email_sent',
+      prospectId: current.id,
+      company: current.company,
+      summary: subject,
+      recipient,
+      body,
+    });
+    flash(`Email queued to ${recipient}`);
+  };
 
   const onRestoreSnoozed = () => {
+    const restored = list.filter((p) => isSnoozed(p, Date.now()));
     update((l) =>
       l.map((p) =>
-        isSnoozed(p, Date.now()) ? { ...p, status: 'new', snoozedUntil: undefined } : p,
+        isSnoozed(p, Date.now())
+          ? { ...p, status: 'new', snoozedUntil: undefined, snoozeRuleLabel: undefined }
+          : p,
       ),
     );
+    restored.forEach((p) =>
+      record({
+        kind: 'restored',
+        prospectId: p.id,
+        company: p.company,
+        summary: 'Restored to the queue from snooze',
+      }),
+    );
     setIndex(0);
-    flash(`${snoozedCount} prospect${snoozedCount === 1 ? '' : 's'} restored`);
+    flash(`${restored.length} prospect${restored.length === 1 ? '' : 's'} restored`);
   };
 
   const onReset = () => {
-    resetProspects().then((seed) => {
+    void Promise.all([resetProspects(), clearActivities()]).then(([seed, empty]) => {
       setItems(seed);
+      setActivities(empty);
       setIndex(0);
       flash('Demo data reset');
     });
@@ -199,9 +306,35 @@ export default function TriageScreen() {
       position={queue.length ? safeIndex + 1 : 0}
       total={queue.length}
       snoozedCount={snoozedCount}
+      activityCount={activities.length}
+      unsyncedCount={pendingCount(activities)}
       onRestoreSnoozed={onRestoreSnoozed}
+      onOpenActivity={() => setActivityOpen(true)}
       onReset={onReset}
     />
+  );
+
+  const overlays = (
+    <>
+      <ActivityLog
+        visible={activityOpen}
+        activities={activities}
+        onClose={() => setActivityOpen(false)}
+        onRetry={() => void retryFailedSyncs().then(setActivities)}
+      />
+      <ReasonSheet
+        visible={reasonMode !== null}
+        mode={reasonMode}
+        company={current?.company ?? ''}
+        onCancel={() => setReasonMode(null)}
+        onConfirm={(r) => (r.kind === 'snooze' ? onSnoozeConfirmed(r) : onRemoveConfirmed(r))}
+      />
+      {toast && (
+        <View style={s.toast} accessibilityLiveRegion="polite">
+          <Text style={s.toastText}>{toast}</Text>
+        </View>
+      )}
+    </>
   );
 
   if (items === null) {
@@ -237,11 +370,7 @@ export default function TriageScreen() {
             </Pressable>
           )}
         </View>
-        {toast && (
-          <View style={s.toast} accessibilityLiveRegion="polite">
-            <Text style={s.toastText}>{toast}</Text>
-          </View>
-        )}
+        {overlays}
       </SafeAreaView>
     );
   }
@@ -254,33 +383,28 @@ export default function TriageScreen() {
         style={{ flex: 1, transform: [{ translateX: pan }] }}
         {...responder.panHandlers}
       >
-        <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
           <ProspectCard
             prospect={current}
             mode={mode}
             onAssign={onAssign}
-            onSendIntro={() => flash('Intro request sent')}
-            onSendEmail={() => flash('Outreach email queued')}
+            onSendIntro={onSendIntro}
+            onSendEmail={onSendEmail}
           />
         </ScrollView>
       </Animated.View>
 
-      {toast && (
-        <View style={s.toast} accessibilityLiveRegion="polite">
-          <Text style={s.toastText}>{toast}</Text>
-        </View>
-      )}
-
       <ActionBar
         onBack={goBack}
-        onSnooze={onSnooze}
+        onSnooze={() => setReasonMode('snooze')}
         onNext={goNext}
-        onRemove={onRemove}
+        onRemove={() => setReasonMode('remove')}
         onJamie={() => setJamieOpen(true)}
         showRemove={mode === 'manager'}
       />
 
       <JamieSheet visible={jamieOpen} prospect={current} onClose={() => setJamieOpen(false)} />
+      {overlays}
     </SafeAreaView>
   );
 }

@@ -38,7 +38,10 @@ export const Header = ({
   position,
   total,
   snoozedCount,
+  activityCount,
+  unsyncedCount,
   onRestoreSnoozed,
+  onOpenActivity,
   onReset,
 }: {
   mode: Mode;
@@ -47,7 +50,10 @@ export const Header = ({
   position: number;
   total: number;
   snoozedCount: number;
+  activityCount: number;
+  unsyncedCount: number;
   onRestoreSnoozed: () => void;
+  onOpenActivity: () => void;
   onReset: () => void;
 }) => (
   <View style={s.header}>
@@ -59,6 +65,15 @@ export const Header = ({
       </Text>
       <Pressable
         accessibilityRole="button"
+        accessibilityLabel="Open activity log"
+        onPress={onOpenActivity}
+        style={({ pressed }) => [s.activityBtn, pressed && { opacity: 0.6 }]}
+      >
+        <Text style={s.activityText}>Activity{activityCount ? ` (${activityCount})` : ''}</Text>
+        {unsyncedCount > 0 ? <View style={s.dot} /> : null}
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
         accessibilityLabel="Reset demo data"
         onPress={onReset}
         style={({ pressed }) => [s.reset, pressed && { opacity: 0.5 }]}
@@ -66,7 +81,9 @@ export const Header = ({
         <Text style={s.resetText}>Reset</Text>
       </Pressable>
     </View>
+
     <ViewToggle mode={mode} onChange={onChangeMode} />
+
     <View style={s.countRow}>
       <Text style={s.countText}>{countLabel}</Text>
       <View style={s.countRight}>
@@ -87,6 +104,9 @@ export const Header = ({
         </View>
       </View>
     </View>
+
+    {/* The sort is the product opinion: urgency beats score. Say so out loud. */}
+    <Text style={s.sortNote}>Sorted by most recent trigger — freshest event first</Text>
   </View>
 );
 
@@ -103,34 +123,20 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 12,
-    gap: 12,
+    gap: 10,
   },
-  subtitle: {
-    flex: 1,
-    fontFamily: font.family,
-    fontSize: 15,
-    color: colors.text,
-  },
-  reset: { paddingVertical: 4, paddingHorizontal: 4 },
-  resetText: {
+  subtitle: { flex: 1, fontFamily: font.family, fontSize: 15, color: colors.text },
+  activityBtn: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, gap: 5 },
+  activityText: {
     fontFamily: font.family,
     fontSize: 13,
     fontWeight: '600',
-    color: colors.textMuted,
+    color: colors.primary,
   },
-  countRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  snoozePill: {
-    backgroundColor: '#F3EEFE',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-  },
-  snoozeText: {
-    fontFamily: font.family,
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.snooze,
-  },
+  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.danger },
+  reset: { paddingVertical: 4, paddingHorizontal: 2 },
+  resetText: { fontFamily: font.family, fontSize: 13, fontWeight: '600', color: colors.textMuted },
+
   toggleWrap: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   toggleBtn: {
     flex: 1,
@@ -147,18 +153,22 @@ const s = StyleSheet.create({
     color: colors.textMuted,
   },
   toggleTextActive: { color: colors.onPrimary },
+
   countRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
+    paddingTop: 12,
   },
-  countText: {
-    fontFamily: font.family,
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.text,
+  countText: { fontFamily: font.family, fontSize: 16, fontWeight: '700', color: colors.text },
+  countRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  snoozePill: {
+    backgroundColor: colors.snoozeBg,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
   },
+  snoozeText: { fontFamily: font.family, fontSize: 12, fontWeight: '600', color: colors.snooze },
   positionPill: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -167,9 +177,12 @@ const s = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: radius.pill,
   },
-  positionText: {
+  positionText: { fontFamily: font.family, fontSize: 12, color: colors.textMuted },
+  sortNote: {
     fontFamily: font.family,
-    fontSize: 12,
-    color: colors.textMuted,
+    fontSize: 11,
+    color: colors.textFaint,
+    paddingTop: 6,
+    paddingBottom: 10,
   },
 });

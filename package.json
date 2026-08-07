@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "build:web": "expo export -p web",
     "serve:web": "npx serve dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "e2e": "node e2e/drive.mjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
