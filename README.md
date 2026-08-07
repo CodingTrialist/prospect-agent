@@ -51,8 +51,12 @@ Serve over HTTPS in production; installability requires a secure context.
 ## Deploying to GitHub Pages
 
 `.github/workflows/deploy-pages.yml` builds and publishes `dist/` on every push
-to the default branch, and can be run manually from the Actions tab. The live
-site is <https://sivarajh.github.io/prospect-agent/>.
+to `main`, and can be run manually from the Actions tab. The live site is
+<https://codingtrialist.github.io/prospect-agent/>.
+
+The branch is named explicitly in the workflow rather than followed from the
+repository settings, because GitHub does not expand `${{ }}` expressions in
+`on.push.branches`. Renaming the default branch means editing that line too.
 
 Pages serves project sites from `/<repo>/` rather than the domain root, which is
 why a few things are written the way they are:
