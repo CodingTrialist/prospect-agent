@@ -1,4 +1,5 @@
 import {
+  EnrichedProspect,
   Investor,
   InternalConnection,
   Prospect,
@@ -20,7 +21,7 @@ import { ago, money } from '../format';
 const firstName = (full: string) => full.split(' ')[0];
 
 /** Subject lines key off the trigger, so they read as written for this company. */
-export const coldSubject = (p: Prospect): string => {
+export const coldSubject = (p: EnrichedProspect): string => {
   const t = primaryTrigger(p);
   if (t?.kind === 'funding') {
     const lead = p.investors.find((i) => i.role === 'lead');
@@ -33,7 +34,7 @@ export const coldSubject = (p: Prospect): string => {
   return `${p.company} — a quick idea on your banking setup`;
 };
 
-export const draftColdEmail = (p: Prospect): string => {
+export const draftColdEmail = (p: EnrichedProspect): string => {
   const t = primaryTrigger(p);
   const lead = p.investors.find((i) => i.role === 'lead');
   const now = p.productFit.find((f) => f.timing === 'now');
@@ -65,7 +66,7 @@ Worth 20 minutes next week?`;
 };
 
 /** Asking a colleague who already owns the relationship — short, and defers to them. */
-export const draftInternalIntro = (p: Prospect, conn: InternalConnection): string => {
+export const draftInternalIntro = (p: EnrichedProspect, conn: InternalConnection): string => {
   const t = primaryTrigger(p);
   return `Hi ${firstName(conn.name)},
 
@@ -81,7 +82,7 @@ Thanks`;
 };
 
 /** The investor path — usually the highest-converting ask when there's no direct tie. */
-export const draftInvestorIntro = (p: Prospect, inv: Investor): string => {
+export const draftInvestorIntro = (p: EnrichedProspect, inv: Investor): string => {
   const tie = inv.tie!;
   const t = primaryTrigger(p);
   return `Hi ${firstName(tie.bankerName)},
@@ -103,7 +104,7 @@ export type IntroPath =
   | { kind: 'investor'; investor: Investor; body: string; label: string }
   | { kind: 'none' };
 
-export const introPath = (p: Prospect): IntroPath => {
+export const introPath = (p: EnrichedProspect): IntroPath => {
   const conn = bestConnection(p);
   if (conn) {
     return {

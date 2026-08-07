@@ -1,8 +1,10 @@
 import {
+  EnrichedProspect,
   Prospect,
   bestConnection,
   coverageConflicts,
   investorPath,
+  isEnriched,
   primaryTrigger,
   triggerAgeDays,
 } from './prospects';
@@ -27,7 +29,7 @@ const bullets = (lines: string[]) => lines.filter(Boolean).map((l) => `• ${l}`
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
-const keyInvestors = (p: Prospect) => {
+const keyInvestors = (p: EnrichedProspect) => {
   if (!p.investors.length) return `No investors on file for ${p.company}.`;
   const inv = investorPath(p);
   const lines = p.investors.map(
@@ -45,7 +47,7 @@ const keyInvestors = (p: Prospect) => {
   return `${p.company} investors:\n\n${bullets(lines)}${path}`;
 };
 
-const fundingHistory = (p: Prospect) => {
+const fundingHistory = (p: EnrichedProspect) => {
   const funding = p.triggers.filter((t) => t.kind === 'funding');
   if (!funding.length) return `No funding events on file for ${p.company}.`;
   const newest = funding.slice().sort((a, b) => b.date - a.date)[0];
@@ -59,7 +61,7 @@ const fundingHistory = (p: Prospect) => {
   )}\n\n${window}\n\nEstimated ${money(p.opportunity.estDepositsUsd)} placeable. ${p.opportunity.basis}.`;
 };
 
-const leadership = (p: Prospect) => {
+const leadership = (p: EnrichedProspect) => {
   const c = p.contact;
   return `Primary contact at ${p.company}:\n\n${bullets([
     `${c.name} — ${c.title}`,
@@ -72,7 +74,7 @@ const leadership = (p: Prospect) => {
   }`;
 };
 
-const latestNews = (p: Prospect) => {
+const latestNews = (p: EnrichedProspect) => {
   const trigs = p.triggers
     .slice()
     .sort((a, b) => b.date - a.date)
@@ -82,7 +84,7 @@ const latestNews = (p: Prospect) => {
   )}\n\nBackground:\n\n${bullets(p.insights)}\n\nA live news feed is not connected in this build — these are the scored triggers.`;
 };
 
-const riskAnalysis = (p: Prospect) => {
+const riskAnalysis = (p: EnrichedProspect) => {
   const risks: string[] = [];
 
   if (p.compliance.status !== 'clear') {
@@ -126,7 +128,7 @@ const riskAnalysis = (p: Prospect) => {
   return `Risk read on ${p.company}:\n\n${bullets(risks)}`;
 };
 
-const competitors = (p: Prospect) => {
+const competitors = (p: EnrichedProspect) => {
   const incumbent = p.incumbent
     ? `The bank to beat is ${p.incumbent.bank}${
         p.incumbent.products.length ? ` (${p.incumbent.products.join(', ')})` : ''
@@ -138,7 +140,7 @@ const competitors = (p: Prospect) => {
   )}. I do not have an external market-data feed wired up in this build, so I will not guess at their product competitors — connect a provider to fill that in.`;
 };
 
-const meetingPrep = (p: Prospect) => {
+const meetingPrep = (p: EnrichedProspect) => {
   const conn = bestConnection(p);
   const t = primaryTrigger(p);
   const now = p.productFit.filter((f) => f.timing === 'now');
@@ -156,7 +158,7 @@ const meetingPrep = (p: Prospect) => {
   )}\n\nDo not pitch the full product set. Ask for 20 minutes; the goal of the first call is a second call.`;
 };
 
-const outreach = (p: Prospect) => {
+const outreach = (p: EnrichedProspect) => {
   const conn = bestConnection(p);
   const inv = investorPath(p);
   if (conn) {
@@ -168,7 +170,7 @@ const outreach = (p: Prospect) => {
   return `Nothing warm here — direct to ${p.contact.name} at ${p.contact.email}.\n\nThe cold draft leads with the trigger, makes one concrete offer, and asks for one thing. Keep it that way; adding a second ask halves the reply rate.`;
 };
 
-const goodFit = (p: Prospect) => {
+const goodFit = (p: EnrichedProspect) => {
   const positives = p.scoreFactors.filter((f) => f.points > 0);
   const negatives = p.scoreFactors.filter((f) => f.points < 0);
   const verdict =
@@ -189,11 +191,11 @@ const goodFit = (p: Prospect) => {
   )} annual fees.`;
 };
 
-const productAdvice = (p: Prospect) => `Product sequence for ${p.company}:\n\n${p.productFit
+const productAdvice = (p: EnrichedProspect) => `Product sequence for ${p.company}:\n\n${p.productFit
   .map((f) => `${f.timing.toUpperCase()} — ${f.product}\n   ${f.rationale}`)
   .join('\n\n')}\n\nLead with the NOW items only. Everything else is a second-meeting conversation.`;
 
-type Matcher = { test: RegExp; build: (p: Prospect) => string };
+type Matcher = { test: RegExp; build: (p: EnrichedProspect) => string };
 
 const MATCHERS: Matcher[] = [
   { test: /investor|backer|cap table|who.*(fund|back)|a16z|sequoia/i, build: keyInvestors },
@@ -208,7 +210,7 @@ const MATCHERS: Matcher[] = [
   { test: /good fit|why|match|score|qualif|worth/i, build: goodFit },
 ];
 
-const fallback = (p: Prospect, question: string) =>
+const fallback = (p: EnrichedProspect, question: string) =>
   `I do not have a specific answer for "${question}". What I know about ${p.company}:\n\n${bullets([
     `${p.industry}, scoring ${p.matchScore}.`,
     `${money(p.opportunity.estDepositsUsd)} estimated deposits.`,
@@ -221,9 +223,18 @@ const fallback = (p: Prospect, question: string) =>
         : 'No warm path.',
   ])}\n\nTry a topic chip below.`;
 
+/**
+ * A hand-added prospect has a name, an introduction, and nothing else. Saying so
+ * is the only honest answer — the same reason Jamie declines to name competitors
+ * with no market-data source behind it.
+ */
+const unenriched = (p: Prospect) =>
+  `${p.company} was added by hand${p.warmIntro ? ` from an intro by ${p.warmIntro.by}` : ''}, so there is no research behind it yet — no score, no sizing, no funding history.\n\nI would rather tell you that than make it up. Once the record carries a contact and a deposit estimate I can help with prep, product sequencing and risk.`;
+
 /** The one function to repoint at a real assistant backend. */
 export async function askJamie(question: string, prospect: Prospect): Promise<string> {
   await new Promise((r) => setTimeout(r, THINKING_MS));
+  if (!isEnriched(prospect)) return unenriched(prospect);
   const matcher = MATCHERS.find((m) => m.test.test(question));
   return matcher ? matcher.build(prospect) : fallback(prospect, question);
 }

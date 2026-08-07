@@ -21,20 +21,24 @@ import {
   HANDBACK_MS,
   Prospect,
   bankerName,
+  createWarmIntroProspect,
   isOverdue,
   primaryTrigger,
 } from '../data/prospects';
+import { CrmMatch, SearchQuery, matchQueue } from '../data/accounts';
 import { resolveSnooze } from '../data/decisions';
 import { loadProspects, resetProspects, saveProspects } from '../data/store';
 import {
   Activity,
   NewActivity,
   clearActivities,
+  crmSearch,
   loadActivities,
   logActivity,
   pendingCount,
   retryFailedSyncs,
 } from '../data/activity';
+import { AddProspectSheet, NewProspectInput } from '../components/AddProspectSheet';
 import { colors, font, radius } from '../theme';
 import { money } from '../format';
 
@@ -59,6 +63,7 @@ export default function TriageScreen() {
   const [index, setIndex] = useState(0);
   const [jamieOpen, setJamieOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [reasonMode, setReasonMode] = useState<'snooze' | 'remove' | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -251,7 +256,9 @@ export default function TriageScreen() {
         kind: 'assigned',
         prospectId: p.id,
         company: p.company,
-        summary: `Assigned to ${banker?.name ?? bankerId}. Est. ${money(p.opportunity.estDepositsUsd)} deposits.`,
+        summary: `Assigned to ${banker?.name ?? bankerId}.${
+          p.opportunity ? ` Est. ${money(p.opportunity.estDepositsUsd)} deposits.` : ' Not sized yet.'
+        }`,
         reason: note,
       }),
     );
@@ -346,6 +353,44 @@ export default function TriageScreen() {
     flash(`${restored.length} prospect${restored.length === 1 ? '' : 's'} restored`);
   };
 
+  /**
+   * The CRM is searched through the adapter; the queue is searched here, since
+   * the adapter has no view of what is already in triage. Both lists are shown
+   * together, the book first.
+   */
+  const onSearchProspect = useCallback(async (query: SearchQuery): Promise<CrmMatch[] | null> => {
+    const inQueue = matchQueue(
+      query,
+      (itemsRef.current ?? []).map((p) => ({
+        company: p.company,
+        dba: p.dba,
+        status: p.status,
+        assignedToName: p.assignedTo ? bankerName(p, p.assignedTo) : undefined,
+      })),
+    );
+    const inCrm = await crmSearch(query);
+    return inCrm === null ? (inQueue.length ? inQueue : null) : [...inCrm, ...inQueue];
+  }, []);
+
+  const onAddProspect = (input: NewProspectInput) => {
+    const created = createWarmIntroProspect(input);
+    setAddOpen(false);
+    update((l) => [...l, created]);
+    record({
+      kind: 'created',
+      prospectId: created.id,
+      company: created.company,
+      summary: `Added by hand from a warm intro${input.introBy ? ` by ${input.introBy}` : ''}. Not scored.`,
+      // Overriding a match is the part worth being able to answer for later.
+      reason: input.matchesShown
+        ? `${input.matchesShown} possible match${input.matchesShown === 1 ? '' : 'es'} shown and added anyway`
+        : 'No match in the book or the queue',
+    });
+    setMode('manager');
+    setIndex(0);
+    flash(`${created.company} added — top of the queue`);
+  };
+
   const onReset = () => {
     void Promise.all([resetProspects(), clearActivities()]).then(([seed, empty]) => {
       setItems(seed);
@@ -394,6 +439,7 @@ export default function TriageScreen() {
       unsyncedCount={pendingCount(activities)}
       onRestoreSnoozed={onRestoreSnoozed}
       onOpenActivity={() => setActivityOpen(true)}
+      onAddProspect={() => setAddOpen(true)}
       onReset={onReset}
     />
   );
@@ -405,6 +451,12 @@ export default function TriageScreen() {
         activities={activities}
         onClose={() => setActivityOpen(false)}
         onRetry={() => void retryFailedSyncs().then(setActivities)}
+      />
+      <AddProspectSheet
+        visible={addOpen}
+        onCancel={() => setAddOpen(false)}
+        onConfirm={onAddProspect}
+        onSearch={onSearchProspect}
       />
       <ReasonSheet
         visible={reasonMode !== null}
@@ -451,6 +503,17 @@ export default function TriageScreen() {
               <Text style={s.emptyBtnText}>
                 Restore {snoozedCount} snoozed prospect{snoozedCount === 1 ? '' : 's'}
               </Text>
+            </Pressable>
+          )}
+          {/* An empty queue is exactly when someone reaches for a name of their own. */}
+          {mode === 'manager' && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Add prospect"
+              onPress={() => setAddOpen(true)}
+              style={({ pressed }) => [s.emptyBtn, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={s.emptyBtnText}>Add a prospect</Text>
             </Pressable>
           )}
         </View>

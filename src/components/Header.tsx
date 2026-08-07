@@ -42,6 +42,7 @@ export const Header = ({
   unsyncedCount,
   onRestoreSnoozed,
   onOpenActivity,
+  onAddProspect,
   onReset,
 }: {
   mode: Mode;
@@ -54,6 +55,7 @@ export const Header = ({
   unsyncedCount: number;
   onRestoreSnoozed: () => void;
   onOpenActivity: () => void;
+  onAddProspect: () => void;
   onReset: () => void;
 }) => (
   <View style={s.header}>
@@ -72,6 +74,17 @@ export const Header = ({
         <Text style={s.activityText}>Activity{activityCount ? ` (${activityCount})` : ''}</Text>
         {unsyncedCount > 0 ? <View style={s.dot} /> : null}
       </Pressable>
+      {/* The feed does not find every prospect; the best ones walk in. */}
+      {mode === 'manager' ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Add prospect"
+          onPress={onAddProspect}
+          style={({ pressed }) => [s.activityBtn, pressed && { opacity: 0.6 }]}
+        >
+          <Text style={s.activityText}>+ Add</Text>
+        </Pressable>
+      ) : null}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Reset demo data"

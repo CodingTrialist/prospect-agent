@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { CrmMatch, SearchQuery, matchAccounts } from './accounts';
 
 /**
  * Every outbound action is recorded here before anything else happens, so there
@@ -19,7 +20,8 @@ export type ActivityKind =
   | 'snoozed'
   | 'removed'
   | 'restored'
-  | 'returned';
+  | 'returned'
+  | 'created';
 
 export type SyncState = 'pending' | 'synced' | 'failed';
 
@@ -47,6 +49,13 @@ export type NewActivity = Omit<Activity, 'id' | 'at' | 'crm' | 'crmRef'>;
 export interface CrmAdapter {
   readonly name: string;
   push(activity: Activity): Promise<{ ref: string }>;
+  /**
+   * Looks a company up before it is added by hand, so nobody courts an account
+   * a colleague already holds. Optional: an adapter written before this existed
+   * is still a valid adapter, and the UI says so rather than pretending the
+   * search came back empty.
+   */
+  search?(query: SearchQuery): Promise<CrmMatch[]>;
 }
 
 /**
@@ -59,6 +68,10 @@ export const localCrmAdapter: CrmAdapter = {
     await new Promise((r) => setTimeout(r, 250));
     return { ref: `LOCAL-${activity.id.slice(-6).toUpperCase()}` };
   },
+  async search(query) {
+    await new Promise((r) => setTimeout(r, 180));
+    return matchAccounts(query);
+  },
 };
 
 let adapter: CrmAdapter = localCrmAdapter;
@@ -69,6 +82,16 @@ export const setCrmAdapter = (next: CrmAdapter) => {
 };
 
 export const crmName = () => adapter.name;
+
+/** `null` means the adapter cannot search at all, which is not the same as no matches. */
+export const crmSearch = async (query: SearchQuery): Promise<CrmMatch[] | null> => {
+  if (!adapter.search) return null;
+  try {
+    return await adapter.search(query);
+  } catch {
+    return null;
+  }
+};
 
 const read = async (): Promise<Activity[]> => {
   try {

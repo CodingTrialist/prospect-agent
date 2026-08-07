@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, TextInput, StyleSheet } from 'react-native';
 import {
+  EnrichedProspect,
   HANDBACK_LABEL,
   Prospect,
   bankerName,
   bestConnection,
   coverageConflicts,
+  isEnriched,
   primaryTrigger,
   triggerAgeDays,
 } from '../data/prospects';
@@ -51,20 +53,27 @@ const CompanyHead = ({ p }: { p: Prospect }) => {
       <View style={s.titleRow}>
         <View style={{ flex: 1 }}>
           <Text style={s.company}>{p.company}</Text>
-          <Text style={s.industry}>{p.industry}</Text>
+          <Text style={s.industry}>{p.dba ? `dba ${p.dba} · ${p.industry}` : p.industry}</Text>
         </View>
         {/* Tappable, because an unexplained score is one nobody acts on. */}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Match score ${p.matchScore}. Show how it was calculated.`}
-          onPress={() => setShowFactors((v) => !v)}
-          style={({ pressed }) => [{ alignItems: 'flex-end' }, pressed && { opacity: 0.6 }]}
-        >
-          <Text style={[s.score, p.matchScore < 50 && { color: colors.textMuted }]}>
-            {p.matchScore}
-          </Text>
-          <Text style={s.scoreLabel}>Match Score {showFactors ? '▴' : '▾'}</Text>
-        </Pressable>
+        {p.matchScore === undefined ? (
+          <View style={{ alignItems: 'flex-end', maxWidth: 120 }}>
+            <Text style={s.unscored}>Not scored</Text>
+            <Text style={s.scoreLabel}>Added by manager</Text>
+          </View>
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Match score ${p.matchScore}. Show how it was calculated.`}
+            onPress={() => setShowFactors((v) => !v)}
+            style={({ pressed }) => [{ alignItems: 'flex-end' }, pressed && { opacity: 0.6 }]}
+          >
+            <Text style={[s.score, p.matchScore < 50 && { color: colors.textMuted }]}>
+              {p.matchScore}
+            </Text>
+            <Text style={s.scoreLabel}>Match Score {showFactors ? '▴' : '▾'}</Text>
+          </Pressable>
+        )}
       </View>
 
       <View style={s.chipRow}>
@@ -87,11 +96,17 @@ const CompanyHead = ({ p }: { p: Prospect }) => {
       )}
 
       {/* The number that actually sizes the opportunity. */}
-      <View style={s.statRow}>
-        <Stat value={money(p.opportunity.estDepositsUsd)} label="Est. deposits" tone="good" />
-        <Stat value={money(p.opportunity.estAnnualFeeUsd)} label="Est. annual fees" />
-      </View>
-      <Text style={s.basis}>{p.opportunity.basis}</Text>
+      {p.opportunity ? (
+        <>
+          <View style={s.statRow}>
+            <Stat value={money(p.opportunity.estDepositsUsd)} label="Est. deposits" tone="good" />
+            <Stat value={money(p.opportunity.estAnnualFeeUsd)} label="Est. annual fees" />
+          </View>
+          <Text style={s.basis}>{p.opportunity.basis}</Text>
+        </>
+      ) : (
+        <Text style={s.basis}>Not sized yet — no deposit or fee estimate on this record.</Text>
+      )}
     </View>
   );
 };
@@ -105,7 +120,9 @@ const ComplianceBanner = ({ p }: { p: Prospect }) => {
       title={
         p.compliance.status === 'blocked'
           ? 'Compliance — do not pursue'
-          : `Compliance review required · ${p.compliance.flags.join(', ')}`
+          : p.compliance.status === 'unknown'
+            ? 'Compliance not screened yet'
+            : `Compliance review required · ${p.compliance.flags.join(', ')}`
       }
       body={p.compliance.note}
     />
@@ -148,75 +165,95 @@ const ConflictBanner = ({ p }: { p: Prospect }) => {
 const Incumbent = ({ p }: { p: Prospect }) => {
   if (!p.incumbent) return null;
   return (
-    <View>
-      <SectionLabel
-        text="Banks with"
-        trailing={p.incumbent.multiBankMandate ? 'Diversification play' : undefined}
-      />
-      <Text style={s.incumbentBank}>
-        {p.incumbent.bank}
-        {p.incumbent.products.length ? ` · ${p.incumbent.products.join(', ')}` : ''}
-      </Text>
-      <Text style={s.muted}>
-        Confidence: {p.incumbent.confidence}. {p.incumbent.note}
-      </Text>
-    </View>
+    <>
+      <View>
+        <SectionLabel
+          text="Banks with"
+          trailing={p.incumbent.multiBankMandate ? 'Diversification play' : undefined}
+        />
+        <Text style={s.incumbentBank}>
+          {p.incumbent.bank}
+          {p.incumbent.products.length ? ` · ${p.incumbent.products.join(', ')}` : ''}
+        </Text>
+        <Text style={s.muted}>
+          Confidence: {p.incumbent.confidence}. {p.incumbent.note}
+        </Text>
+      </View>
+      <Divider />
+    </>
   );
 };
 
 /** Founders ask their investors who to bank with — so the investor is a channel. */
-const Investors = ({ p }: { p: Prospect }) => (
-  <View>
-    <SectionLabel text="Investors" trailing={p.investors.some((i) => i.tie) ? 'Path available' : undefined} />
-    {p.investors.map((inv) => (
-      <View key={`${inv.name}-${inv.round}`} style={s.investorRow}>
-        <Text style={s.investorName}>
-          {inv.name} <Text style={s.muted}>· {inv.round} {inv.role}</Text>
-        </Text>
-        {inv.partner ? <Text style={s.muted}>Partner: {inv.partner}</Text> : null}
-        {inv.tie ? (
-          <Text style={s.investorTie}>
-            ✦ We bank {inv.tie.portfolioCompaniesBanked} of their portfolio.{' '}
-            {inv.tie.knowsPartner
-              ? `${inv.tie.bankerName} knows the partner directly.`
-              : `${inv.tie.bankerName} covers the firm relationship.`}
-          </Text>
-        ) : null}
+const Investors = ({ p }: { p: Prospect }) => {
+  if (!p.investors.length) return null;
+  return (
+    <>
+      <View>
+        <SectionLabel
+          text="Investors"
+          trailing={p.investors.some((i) => i.tie) ? 'Path available' : undefined}
+        />
+        {p.investors.map((inv) => (
+          <View key={`${inv.name}-${inv.round}`} style={s.investorRow}>
+            <Text style={s.investorName}>
+              {inv.name} <Text style={s.muted}>· {inv.round} {inv.role}</Text>
+            </Text>
+            {inv.partner ? <Text style={s.muted}>Partner: {inv.partner}</Text> : null}
+            {inv.tie ? (
+              <Text style={s.investorTie}>
+                ✦ We bank {inv.tie.portfolioCompaniesBanked} of their portfolio.{' '}
+                {inv.tie.knowsPartner
+                  ? `${inv.tie.bankerName} knows the partner directly.`
+                  : `${inv.tie.bankerName} covers the firm relationship.`}
+              </Text>
+            ) : null}
+          </View>
+        ))}
       </View>
-    ))}
-  </View>
-);
+      <Divider />
+    </>
+  );
+};
 
-const ProductFit = ({ p }: { p: Prospect }) => (
-  <View>
-    <SectionLabel text="Where to start" />
-    {p.productFit.map((f) => (
-      <View key={f.product} style={s.productRow}>
-        <View
-          style={[
-            s.timing,
-            f.timing === 'now' && { backgroundColor: colors.scoreBg },
-            f.timing === 'later' && { backgroundColor: colors.surfaceMuted },
-          ]}
-        >
-          <Text
-            style={[
-              s.timingText,
-              f.timing === 'now' && { color: colors.score },
-              f.timing === 'later' && { color: colors.textFaint },
-            ]}
-          >
-            {f.timing.toUpperCase()}
-          </Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={s.productName}>{f.product}</Text>
-          <Text style={s.muted}>{f.rationale}</Text>
-        </View>
+const ProductFit = ({ p }: { p: Prospect }) => {
+  if (!p.productFit.length) return null;
+  return (
+    <>
+      <View>
+        <SectionLabel text="Where to start" />
+        {p.productFit.map((f) => (
+          <View key={f.product} style={s.productRow}>
+            <View
+              style={[
+                s.timing,
+                f.timing === 'now' && { backgroundColor: colors.scoreBg },
+                f.timing === 'later' && {
+                  backgroundColor: colors.surfaceMuted,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  s.timingText,
+                  f.timing === 'now' && { color: colors.score },
+                  f.timing === 'later' && { color: colors.textFaint },
+                ]}
+              >
+                {f.timing.toUpperCase()}
+              </Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.productName}>{f.product}</Text>
+              <Text style={s.muted}>{f.rationale}</Text>
+            </View>
+          </View>
+        ))}
       </View>
-    ))}
-  </View>
-);
+      <Divider />
+    </>
+  );
+};
 
 const BankerMatch = ({
   banker,
@@ -234,10 +271,12 @@ const BankerMatch = ({
           {banker.title} · {banker.coverage}
         </Text>
       </View>
-      <View style={{ alignItems: 'flex-end' }}>
-        <Text style={s.bankerPct}>{banker.matchPct}%</Text>
-        <Text style={s.scoreLabel}>Match</Text>
-      </View>
+      {banker.matchPct === undefined ? null : (
+        <View style={{ alignItems: 'flex-end' }}>
+          <Text style={s.bankerPct}>{banker.matchPct}%</Text>
+          <Text style={s.scoreLabel}>Match</Text>
+        </View>
+      )}
     </View>
     <View style={[s.chipRow, { marginTop: 10 }]}>
       {banker.tags.map((t, idx) => (
@@ -274,10 +313,6 @@ export const ProspectCard = ({
   onSendIntro: (body: string, recipient: string) => void;
   onSendEmail: (body: string, recipient: string, subject: string) => void;
 }) => {
-  const conn = bestConnection(prospect);
-  const path = introPath(prospect);
-  const subject = coldSubject(prospect);
-
   const [note, setNote] = useState(prospect.assignmentNote ?? '');
 
   // A new prospect means a new note. A returned one keeps what was written the
@@ -298,43 +333,50 @@ export const ProspectCard = ({
       {mode === 'banker' && (
         <>
           <HandoffNoteBanner p={prospect} />
-          <SectionLabel text="Primary contact" />
-          <Text style={s.contactName}>{prospect.contact.name}</Text>
-          <Text style={s.bankerMeta}>{prospect.contact.title}</Text>
-          <Text style={s.contactLine}>
-            {prospect.contact.email} · {prospect.contact.phone}
-          </Text>
-          {/* A treasury pitch to a CTO stalls; say so before the call is booked. */}
-          <Banner
-            tone={prospect.contact.isFinanceDecisionMaker ? 'good' : 'warn'}
-            title={
-              prospect.contact.isFinanceDecisionMaker
-                ? 'Owns the banking decision'
-                : 'Not the banking decision maker'
-            }
-            body={prospect.contact.buyerNote}
-          />
+          {prospect.contact ? (
+            <>
+              <SectionLabel text="Primary contact" />
+              <Text style={s.contactName}>{prospect.contact.name}</Text>
+              <Text style={s.bankerMeta}>{prospect.contact.title}</Text>
+              <Text style={s.contactLine}>
+                {prospect.contact.email} · {prospect.contact.phone}
+              </Text>
+              {/* A treasury pitch to a CTO stalls; say so before the call is booked. */}
+              <Banner
+                tone={prospect.contact.isFinanceDecisionMaker ? 'good' : 'warn'}
+                title={
+                  prospect.contact.isFinanceDecisionMaker
+                    ? 'Owns the banking decision'
+                    : 'Not the banking decision maker'
+                }
+                body={prospect.contact.buyerNote}
+              />
+            </>
+          ) : null}
           <Divider />
         </>
       )}
 
-      <View>
-        <Text style={s.insightsTitle}>Key Insights</Text>
-        {prospect.insights.map((i) => (
-          <View key={i} style={s.bulletRow}>
-            <Text style={s.bulletDot}>•</Text>
-            <Text style={s.bulletText}>{i}</Text>
+      {/* A hand-added prospect has none of this yet. An empty heading reads as a
+          rendering bug rather than as an honest gap, so the section goes too. */}
+      {prospect.insights.length ? (
+        <>
+          <View>
+            <Text style={s.insightsTitle}>Key Insights</Text>
+            {prospect.insights.map((i) => (
+              <View key={i} style={s.bulletRow}>
+                <Text style={s.bulletDot}>•</Text>
+                <Text style={s.bulletText}>{i}</Text>
+              </View>
+            ))}
           </View>
-        ))}
-      </View>
-      <Divider />
+          <Divider />
+        </>
+      ) : null}
 
       <Investors p={prospect} />
-      <Divider />
       <Incumbent p={prospect} />
-      <Divider />
       <ProductFit p={prospect} />
-      <Divider />
 
       {mode === 'manager' ? (
         <>
@@ -363,78 +405,15 @@ export const ProspectCard = ({
             />
           ))}
         </>
+      ) : isEnriched(prospect) ? (
+        <OutreachSection p={prospect} onSendIntro={onSendIntro} onSendEmail={onSendEmail} />
       ) : (
         <>
           <ConflictBanner p={prospect} />
-
-          {conn ? (
-            <>
-              <SectionLabel text="Internal connection" trailing="Best match" />
-              <Text style={s.disclaimer}>
-                Based on internal email & call activity — not external data
-              </Text>
-              <View style={s.bankerTop}>
-                <Avatar name={conn.name} />
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={s.bankerName}>{conn.name}</Text>
-                  <Text style={s.bankerMeta}>
-                    {conn.title} · {conn.coverage}
-                  </Text>
-                  <Text style={s.contactLine}>
-                    {conn.calls} calls · {conn.emails} emails · Last: {ago(conn.lastContactDays)}
-                  </Text>
-                </View>
-                <ScorePill value={conn.strengthPct} />
-              </View>
-              <Text style={s.connSummary}>{conn.summary}</Text>
-            </>
-          ) : (
-            <>
-              <SectionLabel text="Warm path" trailing={path.kind === 'investor' ? 'Via investor' : undefined} />
-              <Text style={s.disclaimer}>
-                {path.kind === 'investor'
-                  ? 'No direct relationship. The investor is the next best route in.'
-                  : 'No internal relationship and no investor path — this is a cold open.'}
-              </Text>
-            </>
-          )}
-
-          {/* Every prospect gets an intro draft when a path exists… */}
-          {path.kind !== 'none' && (
-            <DraftBlock
-              label={path.label}
-              initialBody={path.body}
-              ctaLabel="Send intro request"
-              recipient={
-                path.kind === 'internal' ? path.connection.name : path.investor.tie!.bankerName
-              }
-              onSend={(body) =>
-                onSendIntro(
-                  body,
-                  path.kind === 'internal' ? path.connection.name : path.investor.tie!.bankerName,
-                )
-              }
-            />
-          )}
-
-          {/* …and every prospect gets a cold draft, path or not. This block used
-              to be nested under the internal connection, which left exactly the
-              prospects that most need cold outreach with nothing to send. */}
-          <Divider />
-          <SectionLabel text="Cold outreach" />
-          <DraftBlock
-            label={`Draft email to ${prospect.contact.name}`}
-            initialBody={draftColdEmail(prospect)}
-            ctaLabel="Send email"
-            recipient={prospect.contact.email}
-            subject={subject}
-            onSend={(body) => onSendEmail(body, prospect.contact.email, subject)}
-            meta={
-              <View style={{ marginBottom: 8 }}>
-                <Text style={s.contactLine}>To: {prospect.contact.email}</Text>
-                <Text style={s.contactLine}>Subject: {subject}</Text>
-              </View>
-            }
+          <Banner
+            tone="warn"
+            title="No contact on file"
+            body="This arrived as an introduction rather than from the feed, so there is nothing to draft against yet. Find the right person before reaching out."
           />
         </>
       )}
@@ -442,7 +421,112 @@ export const ProspectCard = ({
   );
 };
 
+/**
+ * The banker's half of the card. Everything here needs a contact and a sizing,
+ * so it takes an enriched prospect and the caller decides what to show when
+ * those are missing.
+ */
+const OutreachSection = ({
+  p: prospect,
+  onSendIntro,
+  onSendEmail,
+}: {
+  p: EnrichedProspect;
+  onSendIntro: (body: string, recipient: string) => void;
+  onSendEmail: (body: string, recipient: string, subject: string) => void;
+}) => {
+  const conn = bestConnection(prospect);
+  const path = introPath(prospect);
+  const subject = coldSubject(prospect);
+
+  return (
+    <>
+      <ConflictBanner p={prospect} />
+
+      {conn ? (
+        <>
+          <SectionLabel text="Internal connection" trailing="Best match" />
+          <Text style={s.disclaimer}>
+            Based on internal email & call activity — not external data
+          </Text>
+          <View style={s.bankerTop}>
+            <Avatar name={conn.name} />
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={s.bankerName}>{conn.name}</Text>
+              <Text style={s.bankerMeta}>
+                {conn.title} · {conn.coverage}
+              </Text>
+              <Text style={s.contactLine}>
+                {conn.calls} calls · {conn.emails} emails · Last: {ago(conn.lastContactDays)}
+              </Text>
+            </View>
+            <ScorePill value={conn.strengthPct} />
+          </View>
+          <Text style={s.connSummary}>{conn.summary}</Text>
+        </>
+      ) : (
+        <>
+          <SectionLabel
+            text="Warm path"
+            trailing={path.kind === 'investor' ? 'Via investor' : undefined}
+          />
+          <Text style={s.disclaimer}>
+            {path.kind === 'investor'
+              ? 'No direct relationship. The investor is the next best route in.'
+              : 'No internal relationship and no investor path — this is a cold open.'}
+          </Text>
+        </>
+      )}
+
+      {/* Every prospect gets an intro draft when a path exists… */}
+      {path.kind !== 'none' && (
+        <DraftBlock
+          label={path.label}
+          initialBody={path.body}
+          ctaLabel="Send intro request"
+          recipient={
+            path.kind === 'internal' ? path.connection.name : path.investor.tie!.bankerName
+          }
+          onSend={(body) =>
+            onSendIntro(
+              body,
+              path.kind === 'internal' ? path.connection.name : path.investor.tie!.bankerName,
+            )
+          }
+        />
+      )}
+
+      {/* …and every prospect gets a cold draft, path or not. This block used
+          to be nested under the internal connection, which left exactly the
+          prospects that most need cold outreach with nothing to send. */}
+      <Divider />
+      <SectionLabel text="Cold outreach" />
+      <DraftBlock
+        label={`Draft email to ${prospect.contact.name}`}
+        initialBody={draftColdEmail(prospect)}
+        ctaLabel="Send email"
+        recipient={prospect.contact.email}
+        subject={subject}
+        onSend={(body) => onSendEmail(body, prospect.contact.email, subject)}
+        meta={
+          <View style={{ marginBottom: 8 }}>
+            <Text style={s.contactLine}>To: {prospect.contact.email}</Text>
+            <Text style={s.contactLine}>Subject: {subject}</Text>
+          </View>
+        }
+      />
+    </>
+  );
+};
+
 const s = StyleSheet.create({
+  unscored: {
+    fontFamily: font.family,
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.textMuted,
+    textAlign: 'right',
+  },
   note: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -458,10 +542,29 @@ const s = StyleSheet.create({
     textAlignVertical: 'top',
   },
   titleRow: { flexDirection: 'row', alignItems: 'flex-start' },
-  company: { fontFamily: font.family, fontSize: 24, fontWeight: '700', color: colors.text },
-  industry: { fontFamily: font.family, fontSize: 14, color: colors.textMuted, marginTop: 2 },
-  score: { fontFamily: font.family, fontSize: 30, fontWeight: '700', color: colors.score },
-  scoreLabel: { fontFamily: font.family, fontSize: 12, color: colors.textMuted },
+  company: {
+    fontFamily: font.family,
+    fontSize: 24,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  industry: {
+    fontFamily: font.family,
+    fontSize: 14,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  score: {
+    fontFamily: font.family,
+    fontSize: 30,
+    fontWeight: '700',
+    color: colors.score,
+  },
+  scoreLabel: {
+    fontFamily: font.family,
+    fontSize: 12,
+    color: colors.textMuted,
+  },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 12 },
 
   factorBox: {
@@ -488,7 +591,12 @@ const s = StyleSheet.create({
   },
 
   statRow: { flexDirection: 'row', marginTop: 16 },
-  basis: { fontFamily: font.family, fontSize: 12, color: colors.textFaint, marginTop: 6 },
+  basis: {
+    fontFamily: font.family,
+    fontSize: 12,
+    color: colors.textFaint,
+    marginTop: 6,
+  },
 
   whyNow: {
     backgroundColor: colors.chipBlueBg,
@@ -510,7 +618,12 @@ const s = StyleSheet.create({
     color: colors.chipBlueText,
     marginTop: 3,
   },
-  whyNowSource: { fontFamily: font.family, fontSize: 11, color: colors.textMuted, marginTop: 4 },
+  whyNowSource: {
+    fontFamily: font.family,
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 4,
+  },
 
   insightsTitle: {
     fontFamily: font.family,
@@ -530,7 +643,12 @@ const s = StyleSheet.create({
   },
 
   investorRow: { marginBottom: 10 },
-  investorName: { fontFamily: font.family, fontSize: 15, fontWeight: '600', color: colors.text },
+  investorName: {
+    fontFamily: font.family,
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.text,
+  },
   investorTie: {
     fontFamily: font.family,
     fontSize: 13,
@@ -541,10 +659,24 @@ const s = StyleSheet.create({
     padding: 8,
     marginTop: 6,
   },
-  incumbentBank: { fontFamily: font.family, fontSize: 15, fontWeight: '600', color: colors.text },
-  muted: { fontFamily: font.family, fontSize: 13, color: colors.textMuted, lineHeight: 18 },
+  incumbentBank: {
+    fontFamily: font.family,
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  muted: {
+    fontFamily: font.family,
+    fontSize: 13,
+    color: colors.textMuted,
+    lineHeight: 18,
+  },
 
-  productRow: { flexDirection: 'row', marginBottom: 12, alignItems: 'flex-start' },
+  productRow: {
+    flexDirection: 'row',
+    marginBottom: 12,
+    alignItems: 'flex-start',
+  },
   timing: {
     backgroundColor: colors.chipBlueBg,
     paddingHorizontal: 7,
@@ -559,7 +691,12 @@ const s = StyleSheet.create({
     fontWeight: '700',
     color: colors.chipBlueText,
   },
-  productName: { fontFamily: font.family, fontSize: 14, fontWeight: '600', color: colors.text },
+  productName: {
+    fontFamily: font.family,
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.text,
+  },
 
   bankerCard: {
     borderWidth: 1,
@@ -570,9 +707,24 @@ const s = StyleSheet.create({
     backgroundColor: colors.surfaceMuted,
   },
   bankerTop: { flexDirection: 'row', alignItems: 'center' },
-  bankerName: { fontFamily: font.family, fontSize: 16, fontWeight: '700', color: colors.text },
-  bankerMeta: { fontFamily: font.family, fontSize: 13, color: colors.textMuted, marginTop: 1 },
-  bankerPct: { fontFamily: font.family, fontSize: 20, fontWeight: '700', color: colors.score },
+  bankerName: {
+    fontFamily: font.family,
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  bankerMeta: {
+    fontFamily: font.family,
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: 1,
+  },
+  bankerPct: {
+    fontFamily: font.family,
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.score,
+  },
   bankerBottom: { flexDirection: 'row', alignItems: 'center', marginTop: 14 },
 
   primaryBtn: {
@@ -589,8 +741,18 @@ const s = StyleSheet.create({
     color: colors.onPrimary,
   },
 
-  contactName: { fontFamily: font.family, fontSize: 17, fontWeight: '700', color: colors.text },
-  contactLine: { fontFamily: font.family, fontSize: 13, color: colors.textMuted, marginTop: 3 },
+  contactName: {
+    fontFamily: font.family,
+    fontSize: 17,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  contactLine: {
+    fontFamily: font.family,
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: 3,
+  },
   disclaimer: {
     fontFamily: font.family,
     fontSize: 12,

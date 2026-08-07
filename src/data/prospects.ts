@@ -12,7 +12,7 @@ export type ProspectStatus = 'new' | 'assigned' | 'snoozed' | 'removed';
 
 /** What put this prospect in the queue, and when. Recency drives the sort. */
 export type Trigger = {
-  kind: 'funding' | 'expansion' | 'hiring' | 'leadership' | 'product';
+  kind: 'funding' | 'expansion' | 'hiring' | 'leadership' | 'product' | 'intro';
   label: string;
   /** Epoch ms. Undated intel is not actionable — every trigger carries one. */
   date: number;
@@ -72,7 +72,8 @@ export type ProductFit = {
 
 /** Onboarding friction, surfaced before the courtship rather than after. */
 export type Compliance = {
-  status: 'clear' | 'review' | 'blocked';
+  /** `unknown` is not a gap to hide — nothing has been screened yet. */
+  status: 'clear' | 'review' | 'blocked' | 'unknown';
   flags: string[];
   note: string;
 };
@@ -95,7 +96,8 @@ export type Banker = {
   name: string;
   title: string;
   coverage: string;
-  matchPct: number;
+  /** Absent when there is no score to match against. */
+  matchPct?: number;
   tags: string[];
   /** Capacity in balances and relationship count, not deal count. */
   bookDepositsUsd: number;
@@ -118,16 +120,22 @@ export type InternalConnection = {
 export type Prospect = {
   id: string;
   company: string;
+  /** Trade name, when the company is known by something other than the entity. */
+  dba?: string;
   industry: string;
   sectors: string[];
-  matchScore: number;
+  /**
+   * Absent on a prospect the manager added by hand. A fabricated number next to
+   * earned ones is worse than no number — the card says "not scored" instead.
+   */
+  matchScore?: number;
   scoreFactors: ScoreFactor[];
   triggers: Trigger[];
-  contact: Contact;
+  contact?: Contact;
   insights: string[];
   investors: Investor[];
   incumbent?: Incumbent;
-  opportunity: Opportunity;
+  opportunity?: Opportunity;
   productFit: ProductFit[];
   compliance: Compliance;
   bestFitBankers: Banker[];
@@ -146,7 +154,20 @@ export type Prospect = {
   returnedFrom?: string;
   /** The manager's handoff message: context, next actions, urgency. */
   assignmentNote?: string;
+  /** Set when a manager added this by hand rather than the feed finding it. */
+  warmIntro?: { by: string; at: number };
 };
+
+/**
+ * A prospect that came from the scoring feed, carrying everything the drafts and
+ * the assistant need. Manager-added prospects do not, and narrowing once here
+ * keeps twenty guards out of the builders that consume them.
+ */
+export type EnrichedProspect = Prospect &
+  Required<Pick<Prospect, 'matchScore' | 'contact' | 'opportunity'>>;
+
+export const isEnriched = (p: Prospect): p is EnrichedProspect =>
+  p.matchScore !== undefined && p.contact !== undefined && p.opportunity !== undefined;
 
 const DAY = 24 * 60 * 60 * 1000;
 /** Seed dates are relative so the demo never reads as stale. */
@@ -587,3 +608,84 @@ export const prospects: Prospect[] = [
     status: 'new',
   },
 ];
+
+/**
+ * Every banker the app knows about, deduped across the seed. Coverage is
+ * modelled per prospect, so without this a hand-added prospect would have
+ * nobody to assign to. `matchPct` is dropped: no score, no match percentage.
+ */
+export const ALL_BANKERS: Banker[] = Object.values(
+  prospects.reduce<Record<string, Banker>>((acc, p) => {
+    p.bestFitBankers.forEach((b) => {
+      acc[b.id] = acc[b.id] ?? { ...b, matchPct: undefined };
+    });
+    return acc;
+  }, {}),
+);
+
+const slug = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 40);
+
+/**
+ * A prospect that walked in through a relationship rather than the feed.
+ *
+ * Everything the scoring service would have supplied is genuinely absent, and
+ * stays absent — the card is built to say so. The one thing it does carry is an
+ * `intro` trigger dated now, which puts it at the top of a queue sorted by
+ * trigger recency, where a live introduction belongs.
+ */
+export const createWarmIntroProspect = (input: {
+  company: string;
+  dba?: string;
+  introBy?: string;
+  contactName?: string;
+  contactEmail?: string;
+}): Prospect => {
+  const introBy = input.introBy?.trim();
+  const contactName = input.contactName?.trim();
+  const now = Date.now();
+
+  return {
+    id: `${slug(input.company) || 'prospect'}-${now}`,
+    company: input.company.trim(),
+    dba: input.dba?.trim() || undefined,
+    industry: 'Unclassified',
+    sectors: [],
+    scoreFactors: [],
+    triggers: [
+      {
+        kind: 'intro',
+        label: introBy ? `Warm intro from ${introBy}` : 'Warm intro',
+        date: now,
+        source: 'Added by manager',
+      },
+    ],
+    contact: contactName
+      ? {
+          name: contactName,
+          title: 'Unknown',
+          email: input.contactEmail?.trim() ?? '',
+          phone: '',
+          role: 'ceo',
+          isFinanceDecisionMaker: false,
+          buyerNote: 'Role not confirmed — check before pitching treasury.',
+        }
+      : undefined,
+    insights: [],
+    investors: [],
+    productFit: [],
+    compliance: {
+      status: 'unknown',
+      flags: [],
+      note: 'Not screened yet. Run onboarding checks before any outreach.',
+    },
+    bestFitBankers: ALL_BANKERS,
+    internalConnections: [],
+    status: 'new',
+    warmIntro: { by: introBy || 'an unnamed introduction', at: now },
+  };
+};
