@@ -11,6 +11,7 @@ const KIND_LABEL: Record<Activity['kind'], string> = {
   snoozed: 'Snoozed',
   removed: 'Removed',
   restored: 'Restored',
+  returned: 'Returned to manager',
 };
 
 const SYNC_LABEL = { pending: 'Syncing…', synced: 'In CRM', failed: 'Not synced' } as const;

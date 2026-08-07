@@ -16,7 +16,14 @@ import { ActionBar } from '../components/ActionBar';
 import { JamieSheet } from '../components/JamieSheet';
 import { ReasonSheet, ReasonResult } from '../components/ReasonSheet';
 import { ActivityLog } from '../components/ActivityLog';
-import { Prospect, primaryTrigger } from '../data/prospects';
+import {
+  HANDBACK_LABEL,
+  HANDBACK_MS,
+  Prospect,
+  bankerName,
+  isOverdue,
+  primaryTrigger,
+} from '../data/prospects';
 import { resolveSnooze } from '../data/decisions';
 import { loadProspects, resetProspects, saveProspects } from '../data/store';
 import {
@@ -33,6 +40,8 @@ import { money } from '../format';
 
 const SWIPE_THRESHOLD = 90;
 const SLIDE_MS = 160;
+/** Often enough that a handback is watchable, rarely enough to be free. */
+const SWEEP_MS = Math.min(HANDBACK_MS / 6, 60_000);
 
 /** A snooze that hasn't expired yet keeps the card out of every queue. */
 const isSnoozed = (p: Prospect, now: number) =>
@@ -114,6 +123,65 @@ export default function TriageScreen() {
     toastTimer.current = setTimeout(() => setToast(null), 2600);
   };
 
+  // The sweep runs off an interval, so it needs the current list without
+  // resubscribing every time the queue changes.
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+
+  /**
+   * An assignment nobody acted on comes back to the manager. This mutates
+   * rather than filtering: `assignedTo` has to clear before the prospect can be
+   * reassigned, and the handback is an event worth an audit entry.
+   *
+   * The overdue list is built outside `update` on purpose — logging and
+   * toasting from inside a state updater fires twice under StrictMode.
+   */
+  const loaded = items !== null;
+  useEffect(() => {
+    if (!loaded) return;
+    const tick = () => {
+      const now = Date.now();
+      const due = (itemsRef.current ?? []).filter((p) => isOverdue(p, now));
+      if (!due.length) return;
+
+      update((l) =>
+        l.map(
+          (p): Prospect =>
+            isOverdue(p, now)
+              ? {
+                  ...p,
+                  status: 'new',
+                  returnedFrom: p.assignedTo,
+                  assignedTo: undefined,
+                  assignedAt: undefined,
+                }
+              : p,
+        ),
+      );
+      due.forEach((p) =>
+        record({
+          kind: 'returned',
+          prospectId: p.id,
+          company: p.company,
+          summary: `Returned to the manager queue. No outreach from ${bankerName(
+            p,
+            p.assignedTo,
+          )} in ${HANDBACK_LABEL}.`,
+        }),
+      );
+      flash(
+        due.length === 1
+          ? `${due[0].company} returned — no action in ${HANDBACK_LABEL}`
+          : `${due.length} prospects returned — no action in ${HANDBACK_LABEL}`,
+      );
+    };
+
+    tick();
+    const id = setInterval(tick, SWEEP_MS);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, update, record]);
+
   /**
    * Slides the card out and the next one in. Every animation on `pan` uses the
    * JS driver — the PanResponder writes to the same value, and mixing drivers on
@@ -168,7 +236,15 @@ export default function TriageScreen() {
     if (!current) return;
     const banker = current.bestFitBankers.find((b) => b.id === bankerId);
     consume(
-      () => ({ status: 'assigned', assignedTo: bankerId, snoozedUntil: undefined }),
+      () => ({
+        status: 'assigned',
+        assignedTo: bankerId,
+        assignedAt: Date.now(),
+        snoozedUntil: undefined,
+        // Reassigning must not carry the previous banker's handback banner.
+        workedAt: undefined,
+        returnedFrom: undefined,
+      }),
       (p) => `${p.company} assigned to ${banker?.name ?? 'banker'} — see Banker View`,
       (p) => ({
         kind: 'assigned',
@@ -215,8 +291,13 @@ export default function TriageScreen() {
     );
   };
 
+  /** Outreach is the banker acting on it, which stops the handback clock. */
+  const markWorked = (id: string) =>
+    update((l) => l.map((p) => (p.id === id ? { ...p, workedAt: Date.now() } : p)));
+
   const onSendIntro = (body: string, recipient: string) => {
     if (!current) return;
+    markWorked(current.id);
     record({
       kind: 'intro_requested',
       prospectId: current.id,
@@ -230,6 +311,7 @@ export default function TriageScreen() {
 
   const onSendEmail = (body: string, recipient: string, subject: string) => {
     if (!current) return;
+    markWorked(current.id);
     record({
       kind: 'email_sent',
       prospectId: current.id,

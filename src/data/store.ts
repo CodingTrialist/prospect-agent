@@ -15,6 +15,10 @@ type Decision = {
   snoozeRuleLabel?: string;
   /** Kept because the pass reason is the match model's only feedback signal. */
   decisionReason?: string;
+  assignedAt?: number;
+  workedAt?: number;
+  returnedFrom?: string;
+  assignmentNote?: string;
 };
 
 type Saved = Record<string, Decision>;
@@ -27,13 +31,19 @@ const applyDecisions = (list: Prospect[], saved: Saved): Prospect[] =>
 
 const toDecisions = (list: Prospect[]): Saved =>
   list.reduce<Saved>((acc, p) => {
-    if (p.status !== 'new' || p.assignedTo) {
+    // A returned prospect is `new` with no assignee, so status alone is not
+    // enough to decide there is nothing worth keeping.
+    if (p.status !== 'new' || p.assignedTo || p.returnedFrom || p.assignmentNote) {
       acc[p.id] = {
         status: p.status,
         assignedTo: p.assignedTo,
         snoozedUntil: p.snoozedUntil,
         snoozeRuleLabel: p.snoozeRuleLabel,
         decisionReason: p.decisionReason,
+        assignedAt: p.assignedAt,
+        workedAt: p.workedAt,
+        returnedFrom: p.returnedFrom,
+        assignmentNote: p.assignmentNote,
       };
     }
     return acc;

@@ -138,6 +138,14 @@ export type Prospect = {
   snoozedUntil?: number;
   snoozeRuleLabel?: string;
   decisionReason?: string;
+  /** Set on assignment. The handback clock runs from here. */
+  assignedAt?: number;
+  /** First outbound touch by the banker. Set means the clock has stopped. */
+  workedAt?: number;
+  /** Banker this came back from, so the manager reassigns knowing who dropped it. */
+  returnedFrom?: string;
+  /** The manager's handoff message: context, next actions, urgency. */
+  assignmentNote?: string;
 };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -146,6 +154,32 @@ const daysAgo = (n: number) => Date.now() - n * DAY;
 
 export const SNOOZE_DAYS = 7;
 export const SNOOZE_MS = SNOOZE_DAYS * DAY;
+
+export const HANDBACK_HOURS = 24;
+/** Short in development so the handback can be watched rather than waited out. */
+export const HANDBACK_MS = __DEV__ ? 60_000 : HANDBACK_HOURS * 60 * 60 * 1000;
+/** So the banner never claims "24h" while a dev build fires in a minute. */
+export const HANDBACK_LABEL =
+  HANDBACK_MS >= 3_600_000
+    ? `${Math.round(HANDBACK_MS / 3_600_000)}h`
+    : `${Math.round(HANDBACK_MS / 60_000)}m`;
+
+/**
+ * An assignment nobody acted on. `?? now` is deliberate: state persisted before
+ * this feature has no `assignedAt`, and those must not all hand back at once.
+ */
+export const isOverdue = (p: Prospect, now: number) =>
+  p.status === 'assigned' && !p.workedAt && now - (p.assignedAt ?? now) >= HANDBACK_MS;
+
+/** `assignedTo` and `returnedFrom` hold ids; the UI needs the person. */
+export const bankerName = (p: Prospect, id?: string): string => {
+  if (!id) return 'the banker';
+  return (
+    p.bestFitBankers.find((b) => b.id === id)?.name ??
+    p.internalConnections.find((c) => c.bankerId === id)?.name ??
+    id
+  );
+};
 
 /** The most recent trigger is the "why now" and drives queue order. */
 export const primaryTrigger = (p: Prospect): Trigger | undefined =>

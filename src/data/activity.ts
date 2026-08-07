@@ -18,7 +18,8 @@ export type ActivityKind =
   | 'assigned'
   | 'snoozed'
   | 'removed'
-  | 'restored';
+  | 'restored'
+  | 'returned';
 
 export type SyncState = 'pending' | 'synced' | 'failed';
 
