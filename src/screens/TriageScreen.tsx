@@ -232,7 +232,7 @@ export default function TriageScreen() {
     });
   };
 
-  const onAssign = (bankerId: string) => {
+  const onAssign = (bankerId: string, note?: string) => {
     if (!current) return;
     const banker = current.bestFitBankers.find((b) => b.id === bankerId);
     consume(
@@ -240,6 +240,7 @@ export default function TriageScreen() {
         status: 'assigned',
         assignedTo: bankerId,
         assignedAt: Date.now(),
+        assignmentNote: note,
         snoozedUntil: undefined,
         // Reassigning must not carry the previous banker's handback banner.
         workedAt: undefined,
@@ -251,6 +252,7 @@ export default function TriageScreen() {
         prospectId: p.id,
         company: p.company,
         summary: `Assigned to ${banker?.name ?? bankerId}. Est. ${money(p.opportunity.estDepositsUsd)} deposits.`,
+        reason: note,
       }),
     );
   };

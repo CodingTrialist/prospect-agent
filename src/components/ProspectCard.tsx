@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, Pressable, TextInput, StyleSheet } from 'react-native';
 import {
+  HANDBACK_LABEL,
   Prospect,
+  bankerName,
   bestConnection,
   coverageConflicts,
   primaryTrigger,
@@ -108,6 +110,24 @@ const ComplianceBanner = ({ p }: { p: Prospect }) => {
       body={p.compliance.note}
     />
   );
+};
+
+/** Came back untouched. The manager reassigns knowing who let it sit. */
+const ReturnedBanner = ({ p }: { p: Prospect }) => {
+  if (!p.returnedFrom) return null;
+  return (
+    <Banner
+      tone="warn"
+      title={`Returned — no action from ${bankerName(p, p.returnedFrom)} in ${HANDBACK_LABEL}`}
+      body="Reassign, or add context below on what should happen next."
+    />
+  );
+};
+
+/** What the manager wanted done with this, in their own words. */
+const HandoffNoteBanner = ({ p }: { p: Prospect }) => {
+  if (!p.assignmentNote) return null;
+  return <Banner tone="info" title="Note from your manager" body={p.assignmentNote} />;
 };
 
 /** Two bankers calling one account is a real problem, so name it up front. */
@@ -250,7 +270,7 @@ export const ProspectCard = ({
 }: {
   prospect: Prospect;
   mode: Mode;
-  onAssign: (bankerId: string) => void;
+  onAssign: (bankerId: string, note?: string) => void;
   onSendIntro: (body: string, recipient: string) => void;
   onSendEmail: (body: string, recipient: string, subject: string) => void;
 }) => {
@@ -258,9 +278,18 @@ export const ProspectCard = ({
   const path = introPath(prospect);
   const subject = coldSubject(prospect);
 
+  const [note, setNote] = useState(prospect.assignmentNote ?? '');
+
+  // A new prospect means a new note. A returned one keeps what was written the
+  // first time, so the instruction survives the round trip.
+  useEffect(() => {
+    setNote(prospect.assignmentNote ?? '');
+  }, [prospect.id, prospect.assignmentNote]);
+
   return (
     <Card style={{ marginHorizontal: 16, marginVertical: 12 }}>
       <ComplianceBanner p={prospect} />
+      {mode === 'manager' ? <ReturnedBanner p={prospect} /> : null}
       <CompanyHead p={prospect} />
       <Divider />
 
@@ -268,6 +297,7 @@ export const ProspectCard = ({
 
       {mode === 'banker' && (
         <>
+          <HandoffNoteBanner p={prospect} />
           <SectionLabel text="Primary contact" />
           <Text style={s.contactName}>{prospect.contact.name}</Text>
           <Text style={s.bankerMeta}>{prospect.contact.title}</Text>
@@ -309,12 +339,28 @@ export const ProspectCard = ({
       {mode === 'manager' ? (
         <>
           <ConflictBanner p={prospect} />
+
+          <SectionLabel text="Context / Next Actions / Urgency" />
+          <TextInput
+            value={note}
+            onChangeText={setNote}
+            placeholder="Optional — anything the banker should know, or someone else they should reach out to"
+            placeholderTextColor={colors.textFaint}
+            style={s.note}
+            accessibilityLabel="Handoff note"
+            multiline
+          />
+
           <SectionLabel
             text="Best fit bankers"
             trailing={`${prospect.bestFitBankers.length} recommended`}
           />
           {prospect.bestFitBankers.map((b) => (
-            <BankerMatch key={b.id} banker={b} onAssign={() => onAssign(b.id)} />
+            <BankerMatch
+              key={b.id}
+              banker={b}
+              onAssign={() => onAssign(b.id, note.trim() || undefined)}
+            />
           ))}
         </>
       ) : (
@@ -397,6 +443,20 @@ export const ProspectCard = ({
 };
 
 const s = StyleSheet.create({
+  note: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: 12,
+    minHeight: 68,
+    marginBottom: 4,
+    backgroundColor: colors.surface,
+    fontFamily: font.family,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.text,
+    textAlignVertical: 'top',
+  },
   titleRow: { flexDirection: 'row', alignItems: 'flex-start' },
   company: { fontFamily: font.family, fontSize: 24, fontWeight: '700', color: colors.text },
   industry: { fontFamily: font.family, fontSize: 14, color: colors.textMuted, marginTop: 2 },
