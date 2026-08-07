@@ -101,7 +101,69 @@ try {
   await settle(1400);
   check('reason reaches the toast', (await text()).toLowerCase().includes('too early'));
 
+  section('A handoff note travels with the assignment');
+  await page.getByLabel('Reset demo data').click();
+  await settle(1500);
+  const handoff = page.getByLabel('Handoff note');
+  check('the manager can write one', (await handoff.count()) === 1);
+  await handoff.click();
+  await handoff.type('Go through Dana at Foundry first — she sits on the board.');
+  await settle(400);
+  await page.getByText('Assign Banker').first().click();
+  await settle(1500);
+  await page.getByText('Banker View', { exact: true }).click();
+  await settle(1400);
+  check('the banker is told it exists', await has('Note from your manager'));
+  check('and can read it', await has('Dana at Foundry'));
+
+  section('An untouched assignment comes back to the manager');
+  // Driven from storage rather than the clock: waiting out even the shortened
+  // dev window would make this suite slow for no extra coverage.
+  await page.evaluate(() => {
+    const KEY = 'prospect-triage/queue-state/v2';
+    const state = JSON.parse(localStorage.getItem(KEY));
+    const stale = Date.now() - 25 * 60 * 60 * 1000;
+    for (const id of Object.keys(state.decisions)) {
+      if (state.decisions[id].status === 'assigned') state.decisions[id].assignedAt = stale;
+    }
+    localStorage.setItem(KEY, JSON.stringify(state));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(6000);
+  await shot('07-returned');
+  check('it leaves the banker queue', !(await has('Note from your manager')));
+  check('the manager is told who let it sit', await has('Returned — no action from'));
+  check('the note survives the round trip', await has('Dana at Foundry'));
+
+  section('Outreach stops the handback clock');
+  // Regression: an earlier cut returned every assignment on a timer, which
+  // pulled prospects out of a banker's hands mid-conversation.
+  await page.getByLabel('Reset demo data').click();
+  await settle(1500);
+  await page.getByText('Assign Banker').first().click();
+  await settle(1400);
+  await page.getByText('Banker View', { exact: true }).click();
+  await settle(1400);
+  await page.getByText('Send email').first().click();
+  await settle(800);
+  await page.getByLabel('Confirm send').click();
+  await settle(1400);
+  await page.evaluate(() => {
+    const KEY = 'prospect-triage/queue-state/v2';
+    const state = JSON.parse(localStorage.getItem(KEY));
+    const stale = Date.now() - 25 * 60 * 60 * 1000;
+    for (const id of Object.keys(state.decisions)) state.decisions[id].assignedAt = stale;
+    localStorage.setItem(KEY, JSON.stringify(state));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(6000);
+  await page.getByText('Banker View', { exact: true }).click();
+  await settle(1400);
+  check('a prospect that was worked stays with the banker', await has('1 prospect assigned to you'));
+
   section('Assignment moves work into Banker View');
+  // Reset clears the queue but not the view; the sections above end in Banker View.
+  await page.getByText('Manager View', { exact: true }).click();
   await page.getByLabel('Reset demo data').click();
   await settle(1500);
   for (let i = 0; i < 5; i += 1) {
@@ -174,6 +236,56 @@ try {
   check('records assignments', await has('Assigned'));
   check('reports CRM sync state', (await has('In CRM')) || (await has('Syncing')));
   check('names the CRM target', await has('Local (no CRM connected)'));
+
+  section('A warm intro can be added, once the book has been checked');
+  await page.getByLabel('Close activity log').click();
+  await settle(700);
+  await page.getByText('Manager View', { exact: true }).click();
+  await page.getByLabel('Reset demo data').click();
+  await settle(1500);
+  await page.getByLabel('Add prospect').first().click();
+  await settle(700);
+  await page.getByLabel('Company name').fill('Agently');
+  await settle(1600);
+  await shot('08-duplicate-check');
+  // The point of the search: this company is already banked, by someone else.
+  check('an existing client is surfaced', await has('possible match'));
+  check('and the owner is named', await has('Marcus Webb'));
+  check('the match explains itself', await has('Matched:'));
+  // Names arrive by ear, so a typo must still find the account.
+  await page.getByLabel('Company name').fill('Helios Gird');
+  await settle(1600);
+  check('a typo still finds the account', await has('Chandra Iyer'));
+
+  await page.getByLabel('Company name').fill('Tessellate Photonics');
+  await page.getByLabel('Also known as').fill('Tessellate');
+  await page.getByLabel('Who made the intro?').fill('Dana Whitfield, Foundry Capital');
+  await settle(1600);
+  check('a genuinely new name comes back clean', await has('No match in the book'));
+  await page.getByLabel('Add to queue').click();
+  await settle(1600);
+  await shot('09-warm-intro-added');
+  check('it lands at the top of the queue', await has('Tessellate Photonics'));
+  check('the trade name is kept', await has('dba Tessellate'));
+  check('the intro is the why-now', await has('Warm intro from Dana Whitfield'));
+  // A fabricated score beside earned ones is worse than no score at all.
+  check('no invented score', await has('Not scored'));
+  check('no invented sizing', await has('Not sized yet'));
+  check('compliance is not assumed', await has('Compliance not screened yet'));
+
+  // Regression: created prospects are not in the seed, so persisting only a
+  // triage decision dropped them entirely on reload.
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(6000);
+  check('it survives a reload', await has('Tessellate Photonics'));
+
+  await page.getByText('Assign Banker').first().click();
+  await settle(1400);
+  await page.getByText('Banker View', { exact: true }).click();
+  await settle(1400);
+  // Better a stated gap than an email addressed to nobody.
+  check('the banker is told there is no contact', await has('No contact on file'));
+  check('and is not handed an empty draft', !(await has('Cold outreach')));
 
   section('Console');
   const noisy = consoleErrors.filter((e) => !/DevTools|source map|favicon/i.test(e));

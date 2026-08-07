@@ -89,11 +89,13 @@ src/theme.ts                     colors, radii, type, elevation
 src/pwa.ts                       service worker registration
 src/data/prospects.ts            types + seed data + draft templates
 src/data/store.ts                queue persistence (AsyncStorage)
+src/data/accounts.ts             existing-client fixture + name matching
 src/data/jamie.ts                assistant answers, composed from prospect data
 src/components/ui.tsx            Card, Chip, ScorePill, Avatar, CapacityBar
 src/components/Header.tsx        Manager/Banker toggle, queue counter, snooze restore
 src/components/ProspectCard.tsx  the card body, both view modes
 src/components/ActionBar.tsx     Back / Snooze / Next / Remove / Jamie
+src/components/AddProspectSheet.tsx  add by hand, with the duplicate check
 src/components/JamieSheet.tsx    assistant panel
 src/screens/TriageScreen.tsx     queue state, swipe navigation, actions
 ```
@@ -140,6 +142,22 @@ cosmetic:
 - **Banker View** — prospects that are `assigned`. Act on them: warm intro
   through the internal relationship, or cold outreach.
 
+Assignment carries a **handoff note** — the *Context / Next Actions / Urgency*
+box above the banker list. Routing a prospect to someone is not the same as
+telling them why, or that you already know the way in; the note travels with the
+assignment, shows at the top of the banker's card, and lands in the activity log.
+
+An assignment nobody acts on **comes back after 24 hours**, unassigned and
+flagged with who let it sit. Sending an intro request or a cold email counts as
+acting and stops the clock for good, so a prospect being worked is never yanked
+back mid-conversation. The note survives the round trip, so whoever picks it up
+next still has the instruction. `HANDBACK_MS` in `src/data/prospects.ts` shortens
+to a minute in development, because a 24-hour timer cannot be demonstrated; every
+label reads its wording off the constant rather than hardcoding "24h".
+
+The sweep runs on an interval in the client, which means it only fires while the
+app is open — see "What to wire up next".
+
 Nothing leaves the queue without a reason. **Snooze** asks for an *event* —
 "when they raise again", "when they hire a CFO" — because a seven-day timer
 returns the card at a random moment with nothing changed. **Remove** requires a
@@ -165,10 +183,39 @@ no gesture library needed. Every animation on the shared `Animated.Value` uses
 the JS driver; mixing drivers on one value throws on native.
 
 Triage decisions persist through `@react-native-async-storage/async-storage`
-(`localStorage` on web). Only status, assignment, and snooze time are stored —
+(`localStorage` on web). For seeded prospects only the decision is stored —
+status, assignment, snooze time, the handoff note — and
 `src/data/prospects.ts` stays the source of truth for company content, so
-editing the seed still shows up for someone mid-queue. **Reset** in the header
-clears the store and restarts the demo.
+editing the seed still shows up for someone mid-queue. Manager-added prospects
+are the exception and are stored whole; there is no seed entry for a decision to
+be applied to. **Reset** in the header clears the store and restarts the demo.
+
+## Prospects the feed never found
+
+The best prospects arrive by introduction rather than from a scoring service, so
+**+ Add** in Manager View takes a company by name.
+
+The search that runs first is the point of the feature. A name is checked against
+the bank's own book and the live queue before anything is created, because the
+expensive mistake is not a duplicate row — it is courting a company a colleague
+already banks. `src/data/accounts.ts` normalises legal suffixes and domain tails
+(`Agently Inc.`, `Agently.ai` and `AGENTLY` are one company), searches trade names
+alongside the entity name, and tolerates a typo, since these names are usually
+heard rather than read. Every match says **why** it matched and who holds the
+relationship, so it can be judged rather than trusted. Nothing blocks: a
+genuinely different company with a similar name has to stay addable, and the
+override is written to the activity log.
+
+Such a prospect has no score, no sizing, and often no contact. Those fields are
+optional on `Prospect` and the card says what it does not know — *Not scored*,
+*Not sized yet*, *Compliance not screened yet* — rather than showing a
+fabricated number beside earned ones. Sections with no data are omitted instead
+of rendering an empty heading, the banker's card offers a stated gap in place of
+an email addressed to nobody, and Jamie declines to invent the rest.
+
+`isEnriched()` narrows a `Prospect` to an `EnrichedProspect` at the three places
+that need a full record — the assistant, the drafts, and the outreach half of the
+card — which is what keeps those optional fields from turning into twenty guards.
 
 ## What to wire up next
 
@@ -186,6 +233,13 @@ clears the store and restarts the demo.
   messaging and mail APIs.
 - **Per-banker queues** — Banker View currently shows every assignment. Filter by
   the signed-in banker once there is auth.
+- **The handback, server-side** — the 24h sweep runs on an interval in the
+  client, so it only fires while someone has the app open. A banker who never
+  opens it is exactly the case the rule exists for. This belongs in the same
+  service that owns the queue.
+- **Real CRM search** — `src/data/accounts.ts` is a fictional stand-in for the
+  bank's book. Implement `search` on your `CrmAdapter` and the fixture stops
+  being consulted.
 
 ## CRM write-back
 
@@ -208,6 +262,11 @@ setCrmAdapter({
     // Must be idempotent on activity.id — retries reuse the same id.
     const res = await api.createTask(map(activity));
     return { ref: res.id };
+  },
+  // Optional. Without it, adding a prospect by hand says so rather than
+  // reporting a clean search it never ran.
+  async search({ name, dba }) {
+    return (await api.findAccounts(name, dba)).map(toCrmMatch);
   },
 });
 ```
