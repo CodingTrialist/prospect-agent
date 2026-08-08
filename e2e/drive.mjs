@@ -68,6 +68,17 @@ try {
   check('capacity measured in book, not deal count', await has('book ·'));
   check('why-now carries a date', await has('WHY NOW'));
 
+  // Recent activity used to be a modal behind a header button. It is now part
+  // of the manager's page, so it must be in the DOM with nothing clicked.
+  section('Recent activity is on the page, not behind a button');
+  check('the panel is present unprompted', await has('Recent activity'));
+  check('it names the CRM target', await has('Local (no CRM connected)'));
+  check('and says so when there is nothing yet', await has('Nothing logged yet'));
+  check(
+    'the header no longer offers a duplicate activity button in Manager View',
+    (await page.getByLabel('Open activity log').count()) === 0,
+  );
+
   section('Match score is explainable');
   await page.getByLabel(/Match score .* Show how/).click();
   await settle(600);
@@ -86,7 +97,10 @@ try {
   await settle(300);
   await page.getByLabel('Confirm decision').click();
   await settle(1400);
-  check('toast names the rule', (await text()).toLowerCase().includes('when they raise again'));
+  check(
+    'the rule reaches recent activity without opening the log',
+    (await text()).toLowerCase().includes('when they raise again'),
+  );
   check('snoozed items stay recoverable', await has('Snoozed (1)'));
   check('queue shrank', await has('3 new prospects identified'));
 
@@ -99,7 +113,7 @@ try {
   await settle(300);
   await page.getByLabel('Confirm decision').click();
   await settle(1400);
-  check('reason reaches the toast', (await text()).toLowerCase().includes('too early'));
+  check('reason reaches recent activity', (await text()).toLowerCase().includes('too early'));
 
   section('A handoff note travels with the assignment');
   await page.getByLabel('Reset demo data').click();

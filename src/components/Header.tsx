@@ -65,15 +65,20 @@ export const Header = ({
           ? 'Review and assign prospects to your team'
           : 'Review assigned prospects and take action'}
       </Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Open activity log"
-        onPress={onOpenActivity}
-        style={({ pressed }) => [s.activityBtn, pressed && { opacity: 0.6 }]}
-      >
-        <Text style={s.activityText}>Activity{activityCount ? ` (${activityCount})` : ''}</Text>
-        {unsyncedCount > 0 ? <View style={s.dot} /> : null}
-      </Pressable>
+      {/* Manager View renders recent activity inline at the foot of the page,
+          so the button would only duplicate what is already on screen. Banker
+          View still reaches the log this way. */}
+      {mode === 'banker' ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open activity log"
+          onPress={onOpenActivity}
+          style={({ pressed }) => [s.activityBtn, pressed && { opacity: 0.6 }]}
+        >
+          <Text style={s.activityText}>Activity{activityCount ? ` (${activityCount})` : ''}</Text>
+          {unsyncedCount > 0 ? <View style={s.dot} /> : null}
+        </Pressable>
+      ) : null}
       {/* The feed does not find every prospect; the best ones walk in. */}
       {mode === 'manager' ? (
         <Pressable

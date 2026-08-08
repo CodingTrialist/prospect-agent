@@ -15,7 +15,7 @@ import { ProspectCard } from '../components/ProspectCard';
 import { ActionBar } from '../components/ActionBar';
 import { JamieSheet } from '../components/JamieSheet';
 import { ReasonSheet, ReasonResult } from '../components/ReasonSheet';
-import { ActivityLog } from '../components/ActivityLog';
+import { ActivityLog, RecentActivity } from '../components/ActivityLog';
 import {
   HANDBACK_LABEL,
   HANDBACK_MS,
@@ -65,17 +65,12 @@ export default function TriageScreen() {
   const [activityOpen, setActivityOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [reasonMode, setReasonMode] = useState<'snooze' | 'remove' | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
 
   const pan = useRef(new Animated.Value(0)).current;
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     loadProspects().then(setItems);
     loadActivities().then(setActivities);
-    return () => {
-      if (toastTimer.current) clearTimeout(toastTimer.current);
-    };
   }, []);
 
   // Every mutation goes through here so persistence can never drift from state.
@@ -122,12 +117,6 @@ export default function TriageScreen() {
   const safeIndex = queue.length ? Math.min(index, queue.length - 1) : 0;
   const current: Prospect | undefined = queue[safeIndex];
 
-  const flash = (msg: string) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast(msg);
-    toastTimer.current = setTimeout(() => setToast(null), 2600);
-  };
-
   // The sweep runs off an interval, so it needs the current list without
   // resubscribing every time the queue changes.
   const itemsRef = useRef(items);
@@ -138,8 +127,9 @@ export default function TriageScreen() {
    * rather than filtering: `assignedTo` has to clear before the prospect can be
    * reassigned, and the handback is an event worth an audit entry.
    *
-   * The overdue list is built outside `update` on purpose — logging and
-   * toasting from inside a state updater fires twice under StrictMode.
+   * The overdue list is built outside `update` on purpose — logging from
+   * inside a state updater fires twice under StrictMode, which would put every
+   * handback in the activity panel twice.
    */
   const loaded = items !== null;
   useEffect(() => {
@@ -173,11 +163,6 @@ export default function TriageScreen() {
             p.assignedTo,
           )} in ${HANDBACK_LABEL}.`,
         }),
-      );
-      flash(
-        due.length === 1
-          ? `${due[0].company} returned — no action in ${HANDBACK_LABEL}`
-          : `${due.length} prospects returned — no action in ${HANDBACK_LABEL}`,
       );
     };
 
@@ -225,15 +210,13 @@ export default function TriageScreen() {
    */
   const consume = (
     mutate: (p: Prospect) => Partial<Prospect>,
-    message: (p: Prospect) => string,
-    activity?: (p: Prospect) => NewActivity,
+    activity: (p: Prospect) => NewActivity,
   ) => {
     if (!current) return;
     const target = current;
     slide(-1, () => {
       update((l) => l.map((p) => (p.id === target.id ? { ...p, ...mutate(p) } : p)));
-      if (activity) record(activity(target));
-      flash(message(target));
+      record(activity(target));
     });
   };
 
@@ -251,7 +234,6 @@ export default function TriageScreen() {
         workedAt: undefined,
         returnedFrom: undefined,
       }),
-      (p) => `${p.company} assigned to ${banker?.name ?? 'banker'} — see Banker View`,
       (p) => ({
         kind: 'assigned',
         prospectId: p.id,
@@ -274,7 +256,6 @@ export default function TriageScreen() {
         snoozeRuleLabel: label,
         decisionReason: result.note,
       }),
-      (p) => `${p.company} snoozed — ${label.toLowerCase()}`,
       (p) => ({
         kind: 'snoozed',
         prospectId: p.id,
@@ -289,7 +270,6 @@ export default function TriageScreen() {
     setReasonMode(null);
     consume(
       () => ({ status: 'removed', snoozedUntil: undefined, decisionReason: result.reasonLabel }),
-      (p) => `${p.company} removed — ${result.reasonLabel.toLowerCase()}`,
       (p) => ({
         kind: 'removed',
         prospectId: p.id,
@@ -315,7 +295,6 @@ export default function TriageScreen() {
       recipient,
       body,
     });
-    flash(`Intro request sent to ${recipient}`);
   };
 
   const onSendEmail = (body: string, recipient: string, subject: string) => {
@@ -329,7 +308,6 @@ export default function TriageScreen() {
       recipient,
       body,
     });
-    flash(`Email queued to ${recipient}`);
   };
 
   const onRestoreSnoozed = () => {
@@ -350,7 +328,6 @@ export default function TriageScreen() {
       }),
     );
     setIndex(0);
-    flash(`${restored.length} prospect${restored.length === 1 ? '' : 's'} restored`);
   };
 
   /**
@@ -388,7 +365,6 @@ export default function TriageScreen() {
     });
     setMode('manager');
     setIndex(0);
-    flash(`${created.company} added — top of the queue`);
   };
 
   const onReset = () => {
@@ -396,7 +372,6 @@ export default function TriageScreen() {
       setItems(seed);
       setActivities(empty);
       setIndex(0);
-      flash('Demo data reset');
     });
   };
 
@@ -465,13 +440,24 @@ export default function TriageScreen() {
         onCancel={() => setReasonMode(null)}
         onConfirm={(r) => (r.kind === 'snooze' ? onSnoozeConfirmed(r) : onRemoveConfirmed(r))}
       />
-      {toast && (
-        <View style={s.toast} accessibilityLiveRegion="polite">
-          <Text style={s.toastText}>{toast}</Text>
-        </View>
-      )}
     </>
   );
+
+  /**
+   * Manager View carries the log in the page; Banker View still opens it from
+   * the header. `accessibilityLiveRegion` is what the toast used to provide —
+   * the panel is where an action is confirmed now, so it announces itself.
+   */
+  const recentActivity =
+    mode === 'manager' ? (
+      <View accessibilityLiveRegion="polite">
+        <RecentActivity
+          activities={activities}
+          onOpenFull={() => setActivityOpen(true)}
+          onRetry={() => void retryFailedSyncs().then(setActivities)}
+        />
+      </View>
+    ) : null;
 
   if (items === null) {
     return (
@@ -487,36 +473,40 @@ export default function TriageScreen() {
     return (
       <SafeAreaView style={s.root} edges={['top', 'bottom']}>
         {header}
-        <View style={s.empty}>
-          <Text style={s.emptyTitle}>Nothing left to review</Text>
-          <Text style={s.emptyBody}>
-            {mode === 'manager'
-              ? 'Every prospect has been assigned, snoozed, or removed. Switch to Banker View to act on the assignments.'
-              : 'No prospects are assigned to you yet. Assign some from Manager View.'}
-          </Text>
-          {snoozedCount > 0 && (
-            <Pressable
-              accessibilityRole="button"
-              onPress={onRestoreSnoozed}
-              style={({ pressed }) => [s.emptyBtn, pressed && { opacity: 0.7 }]}
-            >
-              <Text style={s.emptyBtnText}>
-                Restore {snoozedCount} snoozed prospect{snoozedCount === 1 ? '' : 's'}
-              </Text>
-            </Pressable>
-          )}
-          {/* An empty queue is exactly when someone reaches for a name of their own. */}
-          {mode === 'manager' && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Add prospect"
-              onPress={() => setAddOpen(true)}
-              style={({ pressed }) => [s.emptyBtn, pressed && { opacity: 0.7 }]}
-            >
-              <Text style={s.emptyBtnText}>Add a prospect</Text>
-            </Pressable>
-          )}
-        </View>
+        {/* Scrollable so the activity panel is reachable on a short screen. */}
+        <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: 24 }}>
+          <View style={s.empty}>
+            <Text style={s.emptyTitle}>Nothing left to review</Text>
+            <Text style={s.emptyBody}>
+              {mode === 'manager'
+                ? 'Every prospect has been assigned, snoozed, or removed. Switch to Banker View to act on the assignments.'
+                : 'No prospects are assigned to you yet. Assign some from Manager View.'}
+            </Text>
+            {snoozedCount > 0 && (
+              <Pressable
+                accessibilityRole="button"
+                onPress={onRestoreSnoozed}
+                style={({ pressed }) => [s.emptyBtn, pressed && { opacity: 0.7 }]}
+              >
+                <Text style={s.emptyBtnText}>
+                  Restore {snoozedCount} snoozed prospect{snoozedCount === 1 ? '' : 's'}
+                </Text>
+              </Pressable>
+            )}
+            {/* An empty queue is exactly when someone reaches for a name of their own. */}
+            {mode === 'manager' && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Add prospect"
+                onPress={() => setAddOpen(true)}
+                style={({ pressed }) => [s.emptyBtn, pressed && { opacity: 0.7 }]}
+              >
+                <Text style={s.emptyBtnText}>Add a prospect</Text>
+              </Pressable>
+            )}
+          </View>
+          {recentActivity}
+        </ScrollView>
         {overlays}
       </SafeAreaView>
     );
@@ -526,11 +516,19 @@ export default function TriageScreen() {
     <SafeAreaView style={s.root} edges={['top', 'bottom']}>
       {header}
 
-      <Animated.View
-        style={{ flex: 1, transform: [{ translateX: pan }] }}
-        {...responder.panHandlers}
+      {/*
+        The page scrolls, and only the card slides. The Animated.View sits
+        *inside* the ScrollView so recent activity stays put while a card
+        swipes past it — with the wrapper on the outside, the log would slide
+        off screen along with the prospect. It must not keep `flex: 1` in here
+        either: inside a ScrollView that collapses it to nothing.
+      */}
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: 24 }}
+        keyboardShouldPersistTaps="handled"
       >
-        <ScrollView contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
+        <Animated.View style={{ transform: [{ translateX: pan }] }} {...responder.panHandlers}>
           <ProspectCard
             prospect={current}
             mode={mode}
@@ -538,8 +536,10 @@ export default function TriageScreen() {
             onSendIntro={onSendIntro}
             onSendEmail={onSendEmail}
           />
-        </ScrollView>
-      </Animated.View>
+        </Animated.View>
+
+        {recentActivity}
+      </ScrollView>
 
       <ActionBar
         onBack={goBack}
@@ -586,15 +586,4 @@ const s = StyleSheet.create({
     fontWeight: '700',
     color: colors.onPrimary,
   },
-  toast: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    bottom: 92,
-    backgroundColor: '#111827',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  toastText: { fontFamily: font.family, fontSize: 14, color: '#FFFFFF' },
 });
