@@ -17,6 +17,118 @@ const KIND_LABEL: Record<Activity['kind'], string> = {
 
 const SYNC_LABEL = { pending: 'Syncing…', synced: 'In CRM', failed: 'Not synced' } as const;
 
+const EMPTY_COPY =
+  'Nothing logged yet. Assignments, intro requests, emails, and every snooze or removal reason land here.';
+
+/**
+ * One entry. Shared by the inline panel and the full-screen log so the two can
+ * never drift into showing different things about the same record.
+ */
+const ActivityRow = ({ a }: { a: Activity }) => (
+  <View style={s.row}>
+    <View style={s.rowHead}>
+      <Text style={s.kind}>{KIND_LABEL[a.kind]}</Text>
+      <Text style={s.when}>{agoFromDate(a.at)}</Text>
+    </View>
+    <Text style={s.company}>{a.company}</Text>
+    <Text style={s.summary}>{a.summary}</Text>
+    {a.recipient ? <Text style={s.meta}>To: {a.recipient}</Text> : null}
+    {a.reason ? <Text style={s.meta}>Reason: {a.reason}</Text> : null}
+    {a.body ? (
+      <View style={s.body}>
+        <Text style={s.bodyText}>{a.body}</Text>
+      </View>
+    ) : null}
+    <View style={s.syncRow}>
+      <View
+        style={[
+          s.syncPill,
+          a.crm === 'synced' && { backgroundColor: colors.scoreBg },
+          a.crm === 'failed' && { backgroundColor: colors.dangerBg },
+        ]}
+      >
+        <Text
+          style={[
+            s.syncText,
+            a.crm === 'synced' && { color: colors.score },
+            a.crm === 'failed' && { color: colors.danger },
+          ]}
+        >
+          {SYNC_LABEL[a.crm]}
+          {a.crmRef ? ` · ${a.crmRef}` : ''}
+        </Text>
+      </View>
+    </View>
+  </View>
+);
+
+const RetryBar = ({ outstanding, onRetry }: { outstanding: number; onRetry: () => void }) =>
+  outstanding > 0 ? (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Retry CRM sync"
+      onPress={onRetry}
+      style={({ pressed }) => [s.retry, pressed && { opacity: 0.7 }]}
+    >
+      <Text style={s.retryText}>
+        {outstanding} item{outstanding === 1 ? '' : 's'} not in CRM — retry sync
+      </Text>
+    </Pressable>
+  ) : null;
+
+/** How many entries the inline panel shows before deferring to the full log. */
+const INLINE_LIMIT = 5;
+
+/**
+ * Recent activity, rendered in the page rather than behind a button.
+ *
+ * The manager's last few actions are the feedback that an assignment or a
+ * snooze actually landed, so they belong on screen without a click. This shows
+ * the newest {@link INLINE_LIMIT} entries; the full audit trail stays in
+ * {@link ActivityLog}, which is what "View all" opens.
+ */
+export const RecentActivity = ({
+  activities,
+  onOpenFull,
+  onRetry,
+}: {
+  activities: Activity[];
+  onOpenFull: () => void;
+  onRetry: () => void;
+}) => {
+  const shown = activities.slice(0, INLINE_LIMIT);
+
+  return (
+    <View style={s.inline}>
+      <View style={s.inlineHead}>
+        <Text style={s.inlineTitle}>Recent activity</Text>
+        <Text style={s.status}>{crmName()}</Text>
+      </View>
+
+      <RetryBar outstanding={pendingCount(activities)} onRetry={onRetry} />
+
+      {shown.length === 0 ? (
+        <Text style={s.inlineEmpty}>{EMPTY_COPY}</Text>
+      ) : (
+        shown.map((a) => <ActivityRow key={a.id} a={a} />)
+      )}
+
+      {activities.length > shown.length && (
+        <Pressable
+          accessibilityRole="button"
+          // Deliberately not "Open activity log" — that label belongs to the
+          // header button, and the e2e suite selects on it.
+          accessibilityLabel="View all activity"
+          onPress={onOpenFull}
+          style={({ pressed }) => [s.viewAll, pressed && { opacity: 0.6 }]}
+        >
+          <Text style={s.viewAllText}>View all {activities.length} →</Text>
+        </Pressable>
+      )}
+    </View>
+  );
+};
+
 /**
  * The audit trail, and the CRM queue. Bankers abandon a tool that makes them
  * re-key activity into Salesforce by hand, so sync state is shown honestly
@@ -32,90 +144,37 @@ export const ActivityLog = ({
   activities: Activity[];
   onClose: () => void;
   onRetry: () => void;
-}) => {
-  const outstanding = pendingCount(activities);
-
-  return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={s.root}>
-        <View style={s.topBar}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Close activity log"
-            onPress={onClose}
-            style={s.close}
-          >
-            <Text style={s.closeText}>✕</Text>
-          </Pressable>
-          <View style={{ alignItems: 'center' }}>
-            <Text style={s.title}>Activity</Text>
-            <Text style={s.status}>{crmName()}</Text>
-          </View>
-          <View style={s.close} />
+}) => (
+  <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <View style={s.root}>
+      <View style={s.topBar}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close activity log"
+          onPress={onClose}
+          style={s.close}
+        >
+          <Text style={s.closeText}>✕</Text>
+        </Pressable>
+        <View style={{ alignItems: 'center' }}>
+          <Text style={s.title}>Activity</Text>
+          <Text style={s.status}>{crmName()}</Text>
         </View>
-
-        {outstanding > 0 && (
-          <Pressable
-            accessibilityRole="button"
-            onPress={onRetry}
-            style={({ pressed }) => [s.retry, pressed && { opacity: 0.7 }]}
-          >
-            <Text style={s.retryText}>
-              {outstanding} item{outstanding === 1 ? '' : 's'} not in CRM — retry sync
-            </Text>
-          </Pressable>
-        )}
-
-        <ScrollView contentContainerStyle={{ padding: 16 }}>
-          {activities.length === 0 && (
-            <Text style={s.empty}>
-              Nothing logged yet. Assignments, intro requests, emails, and every snooze or removal
-              reason land here.
-            </Text>
-          )}
-
-          {activities.map((a) => (
-            <View key={a.id} style={s.row}>
-              <View style={s.rowHead}>
-                <Text style={s.kind}>{KIND_LABEL[a.kind]}</Text>
-                <Text style={s.when}>{agoFromDate(a.at)}</Text>
-              </View>
-              <Text style={s.company}>{a.company}</Text>
-              <Text style={s.summary}>{a.summary}</Text>
-              {a.recipient ? <Text style={s.meta}>To: {a.recipient}</Text> : null}
-              {a.reason ? <Text style={s.meta}>Reason: {a.reason}</Text> : null}
-              {a.body ? (
-                <View style={s.body}>
-                  <Text style={s.bodyText}>{a.body}</Text>
-                </View>
-              ) : null}
-              <View style={s.syncRow}>
-                <View
-                  style={[
-                    s.syncPill,
-                    a.crm === 'synced' && { backgroundColor: colors.scoreBg },
-                    a.crm === 'failed' && { backgroundColor: colors.dangerBg },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      s.syncText,
-                      a.crm === 'synced' && { color: colors.score },
-                      a.crm === 'failed' && { color: colors.danger },
-                    ]}
-                  >
-                    {SYNC_LABEL[a.crm]}
-                    {a.crmRef ? ` · ${a.crmRef}` : ''}
-                  </Text>
-                </View>
-              </View>
-            </View>
-          ))}
-        </ScrollView>
+        <View style={s.close} />
       </View>
-    </Modal>
-  );
-};
+
+      <RetryBar outstanding={pendingCount(activities)} onRetry={onRetry} />
+
+      <ScrollView contentContainerStyle={{ padding: 16 }}>
+        {activities.length === 0 && <Text style={s.empty}>{EMPTY_COPY}</Text>}
+
+        {activities.map((a) => (
+          <ActivityRow key={a.id} a={a} />
+        ))}
+      </ScrollView>
+    </View>
+  </Modal>
+);
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
@@ -136,6 +195,37 @@ const s = StyleSheet.create({
   status: { fontFamily: font.family, fontSize: 12, color: colors.textMuted },
   retry: { backgroundColor: colors.warnBg, paddingHorizontal: 16, paddingVertical: 10 },
   retryText: { fontFamily: font.family, fontSize: 13, fontWeight: '600', color: colors.warnText },
+
+  // The inline panel sits under the card in the page scroll, so it needs a top
+  // rule to read as a separate region rather than more of the prospect.
+  inline: {
+    marginTop: 8,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  inlineHead: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  inlineTitle: { fontFamily: font.family, fontSize: 15, fontWeight: '700', color: colors.text },
+  inlineEmpty: {
+    fontFamily: font.family,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.textMuted,
+    paddingVertical: 8,
+  },
+  viewAll: { paddingVertical: 8 },
+  viewAllText: {
+    fontFamily: font.family,
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.primary,
+  },
   empty: {
     fontFamily: font.family,
     fontSize: 14,

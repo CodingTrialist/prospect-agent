@@ -178,6 +178,18 @@ Every outbound action is written to `src/data/activity.ts` **before** anything
 else happens, so there is always an answer to "what did we send this account".
 That log is also the CRM queue — see below.
 
+**Recent activity is part of the manager's page, not a modal.** The newest five
+entries render under the card, in the same vertical scroll, so an assignment or
+a snooze confirms itself without a click; "View all" opens the full log when
+there are more. This replaced a transient toast, which said the same thing and
+then took it away — the panel is the confirmation now, which is why it carries
+the `accessibilityLiveRegion` the toast used to. Banker View is unchanged and
+still reaches the log from the header button.
+
+The card slides horizontally inside that page scroll, so its `Animated.View`
+lives *inside* the `ScrollView` rather than wrapping it. Wrapping it would drag
+the activity panel off screen every time a prospect swiped past.
+
 Back and Next wrap around the queue, matching the prototype's looping behavior.
 Actions that consume the current card do *not* advance the index: the next
 prospect slides into the same slot, so advancing as well would skip one.
@@ -253,7 +265,8 @@ month. That matters more than anything else on the list above.
 
 What exists: `src/data/activity.ts` records every assignment, intro request,
 email, snooze and removal with its own sync state, retries failures, and shows
-all of it in the Activity sheet. What does **not** exist is a real integration —
+all of it — inline under the manager's card, and in full in the Activity sheet.
+What does **not** exist is a real integration —
 the shipped `localCrmAdapter` mints a fake reference so the sync states in the UI
 are honest rather than decorative.
 

@@ -103,11 +103,25 @@ point: `push` is required, `search` is optional — the README documents
 implementing the interface with `push` alone, so making a new method required
 breaks every adapter already written against it.
 
+It surfaces in two places off one `ActivityRow`: `RecentActivity`, the newest
+five inline at the foot of Manager View, and the full-screen `ActivityLog` that
+"View all" and the Banker View header button open. Render entries through
+`ActivityRow` rather than re-listing fields, or the two drift.
+
+**There is no toast.** Actions used to `flash()` a transient message; the inline
+panel replaced it, and is why `consume()` takes only a mutation and an activity
+builder. An action that should visibly confirm itself must therefore `record()`
+an activity — one that logs nothing now confirms nothing to the user.
+
 ## UI conventions worth knowing
 
 - Every animation on the shared `pan` `Animated.Value` must use
   `useNativeDriver: false`. The `PanResponder` writes to the same value, and
   mixing drivers on one value throws on native.
+- The card's `Animated.View` sits **inside** the page `ScrollView`, and must not
+  carry `flex: 1` there — inside a scroll container that collapses it. Wrapping
+  the `ScrollView` in it instead (the older shape) slides the activity panel off
+  screen along with the card on every swipe.
 - Card sections render their own trailing `<Divider />` and return `null` when
   they have no data. A parent cannot detect a child rendering null, so a divider
   left in the parent outlives the section it belonged to.
