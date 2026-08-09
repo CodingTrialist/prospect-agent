@@ -24,7 +24,11 @@ export const colors = {
   chipAmberText: '#92400E',
 
   danger: '#DC2626',
+  dangerBg: '#FEECEC',
+  warnText: '#92400E',
+  warnBg: '#FEF3C7',
   snooze: '#7C3AED',
+  snoozeBg: '#F3EEFE',
 };
 
 export const radius = { sm: 8, md: 12, lg: 16, pill: 999 };

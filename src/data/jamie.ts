@@ -1,8 +1,23 @@
-import { Prospect } from './prospects';
+import {
+  EnrichedProspect,
+  Prospect,
+  bestConnection,
+  coverageConflicts,
+  investorPath,
+  isEnriched,
+  primaryTrigger,
+  triggerAgeDays,
+} from './prospects';
+import { ago, money } from '../format';
 
 /**
  * Jamie's answers are composed locally from the prospect record — no network,
  * no API key, so the demo works offline and always says something grounded.
+ *
+ * The rule it follows: answer what the card does not already say. Restating the
+ * bullets the banker just read is not assistance. Where there is no data behind
+ * a question, it says so rather than inventing a plausible answer — the first
+ * fabricated fact repeated in front of a founder ends the tool's credibility.
  *
  * `askJamie` is the single integration point: swap the body for a call to an
  * assistant endpoint and the UI needs no changes.
@@ -10,178 +25,235 @@ import { Prospect } from './prospects';
 
 const THINKING_MS = 500;
 
-const bullets = (lines: string[]) => lines.map((l) => `• ${l}`).join('\n');
+const bullets = (lines: string[]) => lines.filter(Boolean).map((l) => `• ${l}`).join('\n');
 
-/** Pulls "led by <firm>" out of the insight lines rather than inventing names. */
-const investors = (p: Prospect): string[] => {
-  const found = p.insights
-    .map((i) => i.match(/led by (.+?)(?: for | in | with |$)/i)?.[1]?.trim())
-    .filter((x): x is string => Boolean(x));
-  return Array.from(new Set(found));
-};
+const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
-const fundingLines = (p: Prospect) =>
-  p.insights.filter((i) => /series|seed|round|funding|\$\d/i.test(i));
-
-const growthLines = (p: Prospect) =>
-  p.insights.filter((i) => /grow|expand|traction|customer/i.test(i));
-
-const leadershipLines = (p: Prospect) =>
-  p.insights.filter((i) => /leadership|team|founder|technical/i.test(i));
-
-const topBanker = (p: Prospect) =>
-  p.bestFitBankers.reduce<Prospect['bestFitBankers'][number] | undefined>(
-    (best, b) => (!best || b.matchPct > best.matchPct ? b : best),
-    undefined,
+const keyInvestors = (p: EnrichedProspect) => {
+  if (!p.investors.length) return `No investors on file for ${p.company}.`;
+  const inv = investorPath(p);
+  const lines = p.investors.map(
+    (i) => `${i.name} — ${i.round} ${i.role}${i.partner ? `, partner ${i.partner}` : ''}`,
   );
-
-const keyInvestors = (p: Prospect) => {
-  const firms = investors(p);
-  if (!firms.length) {
-    return `I don't have a named investor on file for ${p.company}. What I do have is the funding activity itself:\n\n${bullets(
-      fundingLines(p),
-    )}\n\nThe cap table would come from your data provider — it isn't connected here.`;
-  }
-  return `${p.company} is backed by ${firms.join(' and ')}.\n\n${bullets(
-    fundingLines(p),
-  )}\n\nA lead from ${firms[0]} is a useful signal for timing — institutional rounds usually pull treasury and banking decisions forward by a quarter or two.`;
+  const path = inv?.tie
+    ? `\n\nThis is your way in. We bank ${inv.tie.portfolioCompaniesBanked} ${inv.name} portfolio ${plural(
+        inv.tie.portfolioCompaniesBanked,
+        'company',
+        'companies',
+      )}, and ${inv.tie.bankerName} ${
+        inv.tie.knowsPartner ? 'knows the deal partner directly' : 'covers the firm relationship'
+      }. Founders ask their investors who to bank with — that intro converts better than any email.`
+    : `\n\nNo internal tie to any of these firms, so the investor route is closed here.`;
+  return `${p.company} investors:\n\n${bullets(lines)}${path}`;
 };
 
-const fundingHistory = (p: Prospect) => {
-  const lines = fundingLines(p);
-  if (!lines.length) {
-    return `No funding events are recorded for ${p.company} in this dataset. ${p.contact.name} would be the person to confirm where they are in a raise.`;
-  }
-  return `Funding history for ${p.company}:\n\n${bullets(
-    lines,
-  )}\n\nThat puts them in the window where credit facilities and treasury management usually get revisited.`;
+const fundingHistory = (p: EnrichedProspect) => {
+  const funding = p.triggers.filter((t) => t.kind === 'funding');
+  if (!funding.length) return `No funding events on file for ${p.company}.`;
+  const newest = funding.slice().sort((a, b) => b.date - a.date)[0];
+  const days = triggerAgeDays(newest);
+  const window =
+    days <= 45
+      ? `Closed ${ago(days)} — the placement window is open now. Most of a round is placed within 90 days of close, and after that moving it is painful.`
+      : `Closed ${ago(days)}. The cash is placed by now, so this is a diversification or venture-debt conversation, not a land-the-round one.`;
+  return `${p.company} funding:\n\n${bullets(
+    funding.map((t) => `${t.label} — ${ago(triggerAgeDays(t))}${t.source ? ` (${t.source})` : ''}`),
+  )}\n\n${window}\n\nEstimated ${money(p.opportunity.estDepositsUsd)} placeable. ${p.opportunity.basis}.`;
 };
 
-const leadership = (p: Prospect) => {
-  const lines = leadershipLines(p);
-  const extra = lines.length ? `\n\n${bullets(lines)}` : '';
-  return `Primary contact at ${p.company}:\n\n• ${p.contact.name} — ${p.contact.title}\n• ${p.contact.email}\n• ${p.contact.phone}${extra}`;
-};
-
-const latestNews = (p: Prospect) =>
-  `Here's everything on file for ${p.company} (${p.industry}):\n\n${bullets(
-    p.insights,
-  )}\n\nThese are the scored insights behind the ${p.matchScore} match. A live news feed isn't connected in this build.`;
-
-const riskAnalysis = (p: Prospect) => {
-  const risks: string[] = [];
-  if (!p.internalConnection) {
-    risks.push(
-      'No internal relationship on record — this is a cold start, so expect a longer first-meeting cycle.',
-    );
-  } else {
-    risks.push(
-      `Relationship risk is low: ${p.internalConnection.name} is at ${p.internalConnection.strengthPct}% strength, last contact ${p.internalConnection.lastContact}.`,
-    );
-  }
-  const banker = topBanker(p);
-  if (banker) {
-    const open = banker.dealsCapacity - banker.dealsActive;
-    risks.push(
-      open <= 2
-        ? `Capacity risk: ${banker.name} is at ${banker.dealsActive}/${banker.dealsCapacity} with only ${open} slot${open === 1 ? '' : 's'} open.`
-        : `Capacity is healthy — ${banker.name} has ${open} of ${banker.dealsCapacity} slots open.`,
-    );
-  }
-  if (growthLines(p).length) {
-    risks.push(
-      'Fast growth cuts both ways: the financing need is real, but so is the chance a competitor is already in the room.',
-    );
-  }
-  return `Risk read on ${p.company}:\n\n${bullets(risks)}`;
-};
-
-const competitors = (p: Prospect) =>
-  `${p.company} sits in ${p.sectors.join(' and ')}.\n\nI don't have an external competitor feed wired up in this build, so I won't guess at names. What I can tell you is how we're positioned:\n\n${bullets(
-    [
-      `Coverage match is ${p.matchScore}% against our ${p.industry} book.`,
-      p.bestFitBankers.length
-        ? `${p.bestFitBankers.length} banker${p.bestFitBankers.length === 1 ? '' : 's'} already cover this sector, strongest being ${topBanker(p)?.name} at ${topBanker(p)?.matchPct}%.`
-        : 'No sector-matched banker is assigned yet.',
-      'Connect a market-data provider to fill in the named competitive set.',
-    ],
-  )}`;
-
-const meetingPrep = (p: Prospect) => {
-  const conn = p.internalConnection;
-  const opening = conn
-    ? `Lead with the existing relationship. ${conn.name} has ${conn.calls} calls and ${conn.emails} emails with them, most recently ${conn.lastContact}.\n\nContext from that thread: ${conn.summary}`
-    : `There's no internal history here, so this is a cold open. Lead with the research — it's the only credibility you have in the first two minutes.`;
-  return `Talking points for ${p.contact.name} (${p.contact.title}):\n\n${opening}\n\nWhat to raise:\n\n${bullets(
-    p.insights,
-  )}\n\nAsk for 20 minutes, not an hour. The goal of the first call is a second call.`;
-};
-
-const outreach = (p: Prospect) => {
-  const conn = p.internalConnection;
-  if (conn) {
-    return `Warm path first. ${conn.name} owns the relationship at ${conn.strengthPct}% strength — ask for the introduction rather than going direct.\n\nThe intro draft on the card is ready to send. If ${conn.name} doesn't come back within a few days, fall back to the cold email to ${p.contact.email}.`;
-  }
-  return `No internal connection, so this is direct outreach to ${p.contact.name} at ${p.contact.email}.\n\nThe cold draft on the card leads with their growth story. Keep it to one ask and one paragraph of context — ${p.contact.title.split(' at ')[0]}s don't read the second paragraph.`;
-};
-
-const goodFit = (p: Prospect) => {
-  const banker = topBanker(p);
-  return `${p.company} scores ${p.matchScore} on the model. The drivers:\n\n${bullets(
-    p.insights,
-  )}\n\nSector fit is ${p.sectors.join(' + ')}.${
-    banker
-      ? ` ${banker.name} is the strongest coverage match at ${banker.matchPct}% — ${banker.tags.join(', ')}.`
-      : ''
+const leadership = (p: EnrichedProspect) => {
+  const c = p.contact;
+  return `Primary contact at ${p.company}:\n\n${bullets([
+    `${c.name} — ${c.title}`,
+    c.email,
+    c.phone,
+  ])}\n\n${
+    c.isFinanceDecisionMaker
+      ? `They own the banking decision. ${c.buyerNote}`
+      : `Careful — they do not own the banking decision. ${c.buyerNote}`
   }`;
 };
 
-type Matcher = { test: RegExp; build: (p: Prospect) => string };
+const latestNews = (p: EnrichedProspect) => {
+  const trigs = p.triggers
+    .slice()
+    .sort((a, b) => b.date - a.date)
+    .map((t) => `${t.label} — ${ago(triggerAgeDays(t))}${t.source ? ` (${t.source})` : ''}`);
+  return `What moved recently at ${p.company}:\n\n${bullets(
+    trigs,
+  )}\n\nBackground:\n\n${bullets(p.insights)}\n\nA live news feed is not connected in this build — these are the scored triggers.`;
+};
+
+const riskAnalysis = (p: EnrichedProspect) => {
+  const risks: string[] = [];
+
+  if (p.compliance.status !== 'clear') {
+    risks.push(
+      `Compliance: ${p.compliance.flags.join(', ')}. ${p.compliance.note}`,
+    );
+  }
+  if (!p.contact.isFinanceDecisionMaker) {
+    risks.push(`Wrong buyer on file — ${p.contact.buyerNote}`);
+  }
+
+  const conn = bestConnection(p);
+  risks.push(
+    conn
+      ? `Relationship risk is low: ${conn.name} at ${conn.strengthPct}% strength, last contact ${ago(conn.lastContactDays)}.`
+      : investorPath(p)
+        ? 'No direct relationship, but the investor path is open — expect a longer cycle than a warm intro.'
+        : 'Cold start, no internal or investor path. Longest cycle of anything in your queue.',
+  );
+
+  const conflicts = coverageConflicts(p);
+  if (conflicts.length) {
+    risks.push(
+      `Coverage conflict: ${conflicts.map((c) => c.name).join(', ')} also ${plural(conflicts.length, 'has', 'have')} activity on this account. Clear it before you call.`,
+    );
+  }
+
+  if (p.incumbent) {
+    risks.push(
+      p.incumbent.multiBankMandate
+        ? `Incumbent ${p.incumbent.bank}, but the board wants a second relationship — you are not displacing anyone.`
+        : `Incumbent ${p.incumbent.bank} with no multi-bank mandate. You are asking them to switch, which is a much harder ask.`,
+    );
+  }
+
+  const negatives = p.scoreFactors.filter((f) => f.points < 0);
+  if (negatives.length) {
+    risks.push(`Score drags: ${negatives.map((f) => `${f.label} (${f.points})`).join(', ')}.`);
+  }
+
+  return `Risk read on ${p.company}:\n\n${bullets(risks)}`;
+};
+
+const competitors = (p: EnrichedProspect) => {
+  const incumbent = p.incumbent
+    ? `The bank to beat is ${p.incumbent.bank}${
+        p.incumbent.products.length ? ` (${p.incumbent.products.join(', ')})` : ''
+      }, confidence ${p.incumbent.confidence}. ${p.incumbent.note}`
+    : 'No incumbent identified — confirm on the first call before pitching against anyone.';
+
+  return `Who you are competing with at ${p.company}:\n\n${incumbent}\n\nOn the product-market side, they sit in ${p.sectors.join(
+    ' and ',
+  )}. I do not have an external market-data feed wired up in this build, so I will not guess at their product competitors — connect a provider to fill that in.`;
+};
+
+const meetingPrep = (p: EnrichedProspect) => {
+  const conn = bestConnection(p);
+  const t = primaryTrigger(p);
+  const now = p.productFit.filter((f) => f.timing === 'now');
+
+  const opening = conn
+    ? `Open on the relationship. ${conn.name} has ${conn.calls} calls and ${conn.emails} emails here, last contact ${ago(conn.lastContactDays)}. Context: ${conn.summary}`
+    : investorPath(p)
+      ? `No direct history. Get the investor intro first — walking in cold when an intro is available wastes the shot.`
+      : `Cold open. The research is the only credibility you have in the first two minutes.`;
+
+  return `Prep for ${p.contact.name} (${p.contact.title}):\n\n${opening}\n\n${
+    p.contact.isFinanceDecisionMaker ? '' : `⚠ ${p.contact.buyerNote}\n\n`
+  }Lead with: ${t ? `${t.label}, ${ago(triggerAgeDays(t))}.` : 'their current stage.'}\n\nThe ask on this call:\n\n${bullets(
+    now.map((f) => `${f.product} — ${f.rationale}`),
+  )}\n\nDo not pitch the full product set. Ask for 20 minutes; the goal of the first call is a second call.`;
+};
+
+const outreach = (p: EnrichedProspect) => {
+  const conn = bestConnection(p);
+  const inv = investorPath(p);
+  if (conn) {
+    return `Warm path first. ${conn.name} owns this at ${conn.strengthPct}% strength and spoke to them ${ago(conn.lastContactDays)}.\n\nHonestly, ask whether they want to run it themselves rather than hand you an intro — at that strength this may already be their account. The intro draft on the card is written that way.`;
+  }
+  if (inv?.tie) {
+    return `No direct relationship, so go through the investor. ${inv.tie.bankerName} covers ${inv.name} and we bank ${inv.tie.portfolioCompaniesBanked} of their portfolio.\n\nThe intro draft on the card asks for exactly that. Cold email is the fallback if it does not land in a week.`;
+  }
+  return `Nothing warm here — direct to ${p.contact.name} at ${p.contact.email}.\n\nThe cold draft leads with the trigger, makes one concrete offer, and asks for one thing. Keep it that way; adding a second ask halves the reply rate.`;
+};
+
+const goodFit = (p: EnrichedProspect) => {
+  const positives = p.scoreFactors.filter((f) => f.points > 0);
+  const negatives = p.scoreFactors.filter((f) => f.points < 0);
+  const verdict =
+    p.matchScore >= 75
+      ? 'Worth your time.'
+      : p.matchScore >= 50
+        ? 'Marginal — work it only if the queue is thin.'
+        : 'Honestly, pass. The score is low for good reasons.';
+
+  return `${p.company} scores ${p.matchScore}. ${verdict}\n\nFor:\n\n${bullets(
+    positives.map((f) => `${f.label} (+${f.points}) — ${f.detail}`),
+  )}${
+    negatives.length
+      ? `\n\nAgainst:\n\n${bullets(negatives.map((f) => `${f.label} (${f.points}) — ${f.detail}`))}`
+      : ''
+  }\n\nSized at ${money(p.opportunity.estDepositsUsd)} deposits, ${money(
+    p.opportunity.estAnnualFeeUsd,
+  )} annual fees.`;
+};
+
+const productAdvice = (p: EnrichedProspect) => `Product sequence for ${p.company}:\n\n${p.productFit
+  .map((f) => `${f.timing.toUpperCase()} — ${f.product}\n   ${f.rationale}`)
+  .join('\n\n')}\n\nLead with the NOW items only. Everything else is a second-meeting conversation.`;
+
+type Matcher = { test: RegExp; build: (p: EnrichedProspect) => string };
 
 const MATCHERS: Matcher[] = [
-  { test: /investor|backer|cap table|who.*(fund|back)/i, build: keyInvestors },
-  { test: /funding|raise|round|series|seed|valuation/i, build: fundingHistory },
-  { test: /leader|founder|ceo|cto|cfo|exec|who (do|should) i/i, build: leadership },
-  { test: /news|latest|recent|happening|update/i, build: latestNews },
-  { test: /risk|concern|downside|watch out|red flag/i, build: riskAnalysis },
-  { test: /competitor|competitive|landscape|rival|market/i, build: competitors },
-  { test: /meeting|prep|talking point|pitch|first call|agenda/i, build: meetingPrep },
+  { test: /investor|backer|cap table|who.*(fund|back)|a16z|sequoia/i, build: keyInvestors },
+  { test: /funding|raise|round|series|seed|valuation|proceeds/i, build: fundingHistory },
+  { test: /product|sell|pitch|offer|treasury|fx|venture debt|deposit/i, build: productAdvice },
+  { test: /leader|founder|ceo|cto|cfo|exec|contact|who (do|should) i/i, build: leadership },
+  { test: /news|latest|recent|happening|update|trigger|why now/i, build: latestNews },
+  { test: /risk|concern|downside|watch out|red flag|compliance/i, build: riskAnalysis },
+  { test: /competitor|competitive|landscape|rival|incumbent|bank with/i, build: competitors },
+  { test: /meeting|prep|talking point|first call|agenda/i, build: meetingPrep },
   { test: /outreach|email|intro|reach out|contact them|message/i, build: outreach },
-  { test: /good fit|why|match|score|qualif/i, build: goodFit },
+  { test: /good fit|why|match|score|qualif|worth/i, build: goodFit },
 ];
 
-const fallback = (p: Prospect, question: string) =>
-  `I don't have a specific answer for "${question}" — here's what I know about ${p.company}:\n\n${bullets(
-    [
-      `${p.industry}, scoring ${p.matchScore} on the match model.`,
-      `Sectors: ${p.sectors.join(', ')}.`,
-      `Primary contact: ${p.contact.name}, ${p.contact.title}.`,
-      p.internalConnection
-        ? `Internal relationship via ${p.internalConnection.name} at ${p.internalConnection.strengthPct}% strength.`
-        : 'No internal relationship on record.',
-    ],
-  )}\n\nTry a topic chip below, or ask about funding, leadership, risks, or meeting prep.`;
+const fallback = (p: EnrichedProspect, question: string) =>
+  `I do not have a specific answer for "${question}". What I know about ${p.company}:\n\n${bullets([
+    `${p.industry}, scoring ${p.matchScore}.`,
+    `${money(p.opportunity.estDepositsUsd)} estimated deposits.`,
+    `Contact: ${p.contact.name}, ${p.contact.title}.`,
+    p.incumbent ? `Banks with ${p.incumbent.bank}.` : 'Incumbent bank unknown.',
+    bestConnection(p)
+      ? `Internal relationship via ${bestConnection(p)!.name}.`
+      : investorPath(p)
+        ? `Investor path via ${investorPath(p)!.name}.`
+        : 'No warm path.',
+  ])}\n\nTry a topic chip below.`;
+
+/**
+ * A hand-added prospect has a name, an introduction, and nothing else. Saying so
+ * is the only honest answer — the same reason Jamie declines to name competitors
+ * with no market-data source behind it.
+ */
+const unenriched = (p: Prospect) =>
+  `${p.company} was added by hand${p.warmIntro ? ` from an intro by ${p.warmIntro.by}` : ''}, so there is no research behind it yet — no score, no sizing, no funding history.\n\nI would rather tell you that than make it up. Once the record carries a contact and a deposit estimate I can help with prep, product sequencing and risk.`;
 
 /** The one function to repoint at a real assistant backend. */
 export async function askJamie(question: string, prospect: Prospect): Promise<string> {
   await new Promise((r) => setTimeout(r, THINKING_MS));
+  if (!isEnriched(prospect)) return unenriched(prospect);
   const matcher = MATCHERS.find((m) => m.test.test(question));
   return matcher ? matcher.build(prospect) : fallback(prospect, question);
 }
 
 export const suggestedFollowUps = (p: Prospect): string[] => [
-  `What makes ${p.company} a good fit?`,
-  'Show me the competitor landscape',
-  'Prepare talking points for a first meeting',
+  `Is ${p.company} worth my time?`,
+  'Which product do I lead with?',
+  'What are the risks here?',
+  'How do I get introduced?',
 ];
 
 export const TOPICS = [
+  'Why now',
   'Key Investors',
   'Funding History',
+  'Product Fit',
   'Leadership',
-  'Latest News',
   'Risk Analysis',
-  'Competitors',
+  'Incumbent Bank',
   'Meeting Prep',
   'Outreach',
 ];

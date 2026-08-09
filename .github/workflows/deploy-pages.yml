@@ -2,7 +2,10 @@ name: Deploy web to GitHub Pages
 
 on:
   push:
-    branches: [claude/prospect-triage-app-cvnnn1]
+    # Keep this in step with the repository's default branch. It has to be a
+    # literal: GitHub does not expand ${{ }} expressions in `on.push.branches`,
+    # so "whatever the default branch is" cannot be written here.
+    branches: [main]
   workflow_dispatch:
 
 permissions:
