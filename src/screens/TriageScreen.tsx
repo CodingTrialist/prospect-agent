@@ -19,9 +19,11 @@ import { ActivityLog, RecentActivity } from '../components/ActivityLog';
 import {
   HANDBACK_LABEL,
   HANDBACK_MS,
+  MANAGER_TIMEOUT_LABEL,
   Prospect,
   bankerName,
   createWarmIntroProspect,
+  isManagerOverdue,
   isOverdue,
   primaryTrigger,
 } from '../data/prospects';
@@ -136,24 +138,38 @@ export default function TriageScreen() {
     if (!loaded) return;
     const tick = () => {
       const now = Date.now();
-      const due = (itemsRef.current ?? []).filter((p) => isOverdue(p, now));
-      if (!due.length) return;
+      const dueHandback = (itemsRef.current ?? []).filter((p) => isOverdue(p, now));
+      const dueManagerAutoAssign = (itemsRef.current ?? []).filter((p) => isManagerOverdue(p, now));
+      if (!dueHandback.length && !dueManagerAutoAssign.length) return;
 
       update((l) =>
-        l.map(
-          (p): Prospect =>
-            isOverdue(p, now)
-              ? {
-                  ...p,
-                  status: 'new',
-                  returnedFrom: p.assignedTo,
-                  assignedTo: undefined,
-                  assignedAt: undefined,
-                }
-              : p,
-        ),
+        l.map((p): Prospect => {
+          if (isOverdue(p, now)) {
+            return {
+              ...p,
+              status: 'new',
+              returnedFrom: p.assignedTo,
+              assignedTo: undefined,
+              assignedAt: undefined,
+              unassignedAt: now,
+            };
+          }
+          if (isManagerOverdue(p, now)) {
+            const topBanker = p.bestFitBankers[0];
+            return {
+              ...p,
+              status: 'assigned',
+              assignedTo: topBanker?.id,
+              assignedAt: now,
+              unassignedAt: undefined,
+              assignmentNote: `Auto-assigned to #1 banker match (${topBanker?.name ?? 'top match'}) after ${MANAGER_TIMEOUT_LABEL} manager timeout.`,
+            };
+          }
+          return p;
+        }),
       );
-      due.forEach((p) =>
+
+      dueHandback.forEach((p) =>
         record({
           kind: 'returned',
           prospectId: p.id,
@@ -164,6 +180,17 @@ export default function TriageScreen() {
           )} in ${HANDBACK_LABEL}.`,
         }),
       );
+
+      dueManagerAutoAssign.forEach((p) => {
+        const topBanker = p.bestFitBankers[0];
+        record({
+          kind: 'assigned',
+          prospectId: p.id,
+          company: p.company,
+          summary: `Auto-assigned to ${topBanker?.name ?? 'top banker match'} (#1 choice) after ${MANAGER_TIMEOUT_LABEL} manager action timeout.`,
+          reason: 'Defaulted to #1 match on 18h manager timeout',
+        });
+      });
     };
 
     tick();
@@ -228,6 +255,7 @@ export default function TriageScreen() {
         status: 'assigned',
         assignedTo: bankerId,
         assignedAt: Date.now(),
+        unassignedAt: undefined,
         assignmentNote: note,
         snoozedUntil: undefined,
         // Reassigning must not carry the previous banker's handback banner.

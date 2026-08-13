@@ -149,6 +149,24 @@ try {
   check('the manager is told who let it sit', await has('Returned — no action from'));
   check('the note survives the round trip', await has('Dana at Foundry'));
 
+  section('18h manager timeout auto-assigns to #1 banker match');
+  await page.getByText('Manager View', { exact: true }).click();
+  await settle(1000);
+  check('manager card shows auto-assign banner', await has('Auto-assigns to'));
+  await page.evaluate(() => {
+    const KEY = 'prospect-triage/queue-state/v2';
+    const state = JSON.parse(localStorage.getItem(KEY) || '{"decisions":{},"created":[]}');
+    const stale = Date.now() - 19 * 60 * 60 * 1000;
+    // Set unassignedAt to 19 hours ago for the current prospect in Manager View
+    state.decisions['p-1'] = { ...(state.decisions['p-1'] || {}), status: 'new', unassignedAt: stale };
+    localStorage.setItem(KEY, JSON.stringify(state));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(6000);
+  await page.getByText('Banker View', { exact: true }).click();
+  await settle(1400);
+  check('auto-assigned prospect lands in banker queue', await has('Auto-assigned to #1 banker match'));
+
   section('Outreach stops the handback clock');
   // Regression: an earlier cut returned every assignment on a timer, which
   // pulled prospects out of a banker's hands mid-conversation.

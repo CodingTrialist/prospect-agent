@@ -146,6 +146,8 @@ export type Prospect = {
   snoozedUntil?: number;
   snoozeRuleLabel?: string;
   decisionReason?: string;
+  /** Set when prospect enters unassigned state. The manager auto-assign clock runs from here. */
+  unassignedAt?: number;
   /** Set on assignment. The handback clock runs from here. */
   assignedAt?: number;
   /** First outbound touch by the banker. Set means the clock has stopped. */
@@ -184,6 +186,23 @@ export const HANDBACK_LABEL =
   HANDBACK_MS >= 3_600_000
     ? `${Math.round(HANDBACK_MS / 3_600_000)}h`
     : `${Math.round(HANDBACK_MS / 60_000)}m`;
+
+export const MANAGER_TIMEOUT_HOURS = 18;
+/** Short in development (45s) so the auto-assignment timeout can be tested easily. */
+export const MANAGER_TIMEOUT_MS = __DEV__ ? 45_000 : MANAGER_TIMEOUT_HOURS * 60 * 60 * 1000;
+export const MANAGER_TIMEOUT_LABEL =
+  MANAGER_TIMEOUT_MS >= 3_600_000
+    ? `${Math.round(MANAGER_TIMEOUT_MS / 3_600_000)}h`
+    : `${Math.round(MANAGER_TIMEOUT_MS / 1_000)}s`;
+
+/**
+ * An unassigned prospect in Manager View that has sat without manager action for 18h.
+ * Defaults to auto-assigning to the #1 banker match.
+ */
+export const isManagerOverdue = (p: Prospect, now: number) =>
+  p.status === 'new' &&
+  !p.snoozedUntil &&
+  now - (p.unassignedAt ?? now) >= MANAGER_TIMEOUT_MS;
 
 /**
  * An assignment nobody acted on. `?? now` is deliberate: state persisted before

@@ -3,6 +3,7 @@ import { View, Text, Pressable, TextInput, StyleSheet } from 'react-native';
 import {
   EnrichedProspect,
   HANDBACK_LABEL,
+  MANAGER_TIMEOUT_LABEL,
   Prospect,
   bankerName,
   bestConnection,
@@ -137,6 +138,20 @@ const ReturnedBanner = ({ p }: { p: Prospect }) => {
       tone="warn"
       title={`Returned — no action from ${bankerName(p, p.returnedFrom)} in ${HANDBACK_LABEL}`}
       body="Reassign, or add context below on what should happen next."
+    />
+  );
+};
+
+/** Unassigned manager card timer banner informing manager of default auto-assignment to #1 banker. */
+const ManagerTimerBanner = ({ p, mode }: { p: Prospect; mode: Mode }) => {
+  if (mode !== 'manager' || p.status !== 'new' || p.snoozedUntil) return null;
+  const topBanker = p.bestFitBankers[0];
+  const topName = topBanker ? topBanker.name : 'top banker match';
+  return (
+    <Banner
+      tone="info"
+      title={`Auto-assigns to ${topName} (#1 match) in ${MANAGER_TIMEOUT_LABEL} if unacted`}
+      body="Manager action required: assign, snooze, or pass before the default timer expires."
     />
   );
 };
@@ -324,7 +339,12 @@ export const ProspectCard = ({
   return (
     <Card style={{ marginHorizontal: 16, marginVertical: 12 }}>
       <ComplianceBanner p={prospect} />
-      {mode === 'manager' ? <ReturnedBanner p={prospect} /> : null}
+      {mode === 'manager' ? (
+        <>
+          <ReturnedBanner p={prospect} />
+          <ManagerTimerBanner p={prospect} mode={mode} />
+        </>
+      ) : null}
       <CompanyHead p={prospect} />
       <Divider />
 

@@ -18,6 +18,7 @@ type Decision = {
   snoozeRuleLabel?: string;
   /** Kept because the pass reason is the match model's only feedback signal. */
   decisionReason?: string;
+  unassignedAt?: number;
   assignedAt?: number;
   workedAt?: number;
   returnedFrom?: string;
@@ -47,13 +48,14 @@ const toDecisions = (list: Prospect[]): Decisions =>
     if (!seedIds.has(p.id)) return acc;
     // A returned prospect is `new` with no assignee, so status alone is not
     // enough to decide there is nothing worth keeping.
-    if (p.status !== 'new' || p.assignedTo || p.returnedFrom || p.assignmentNote) {
+    if (p.status !== 'new' || p.assignedTo || p.returnedFrom || p.assignmentNote || p.unassignedAt) {
       acc[p.id] = {
         status: p.status,
         assignedTo: p.assignedTo,
         snoozedUntil: p.snoozedUntil,
         snoozeRuleLabel: p.snoozeRuleLabel,
         decisionReason: p.decisionReason,
+        unassignedAt: p.unassignedAt,
         assignedAt: p.assignedAt,
         workedAt: p.workedAt,
         returnedFrom: p.returnedFrom,
