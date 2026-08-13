@@ -527,13 +527,7 @@ const OutreachSection = ({
         ctaLabel="Send email"
         recipient={prospect.contact.email}
         subject={subject}
-        onSend={(body) => onSendEmail(body, prospect.contact.email, subject)}
-        meta={
-          <View style={{ marginBottom: 8 }}>
-            <Text style={s.contactLine}>To: {prospect.contact.email}</Text>
-            <Text style={s.contactLine}>Subject: {subject}</Text>
-          </View>
-        }
+        onSend={(body, finalSubject) => onSendEmail(body, prospect.contact.email, finalSubject ?? subject)}
       />
     </>
   );

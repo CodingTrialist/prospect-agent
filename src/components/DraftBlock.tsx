@@ -14,7 +14,7 @@ export const DraftBlock = ({
   initialBody,
   ctaLabel,
   recipient,
-  subject,
+  subject: initialSubject,
   onSend,
   meta,
 }: {
@@ -23,21 +23,25 @@ export const DraftBlock = ({
   ctaLabel: string;
   recipient: string;
   subject?: string;
-  /** Receives the final, possibly edited, text. */
-  onSend: (body: string) => void;
+  /** Receives the final, possibly edited, text and subject. */
+  onSend: (body: string, subject?: string) => void;
   meta?: React.ReactNode;
 }) => {
   const [body, setBody] = useState(initialBody);
+  const [subject, setSubject] = useState(initialSubject ?? '');
   const [confirming, setConfirming] = useState(false);
   const [sent, setSent] = useState(false);
 
   // A new prospect means a new draft; keep the editor from carrying text over.
   useEffect(() => {
     setBody(initialBody);
+    setSubject(initialSubject ?? '');
     setSent(false);
-  }, [initialBody]);
+  }, [initialBody, initialSubject]);
 
-  const edited = body.trim() !== initialBody.trim();
+  const edited =
+    body.trim() !== initialBody.trim() ||
+    (initialSubject !== undefined && subject.trim() !== initialSubject.trim());
 
   return (
     <View style={{ marginTop: 12 }}>
@@ -46,7 +50,27 @@ export const DraftBlock = ({
         {edited && !sent ? <Text style={s.editedTag}>Edited</Text> : null}
         {sent ? <Text style={s.sentTag}>Sent</Text> : null}
       </View>
-      {meta}
+
+      {initialSubject !== undefined ? (
+        <View style={{ marginBottom: 8 }}>
+          <Text style={s.contactLine}>To: {recipient}</Text>
+          <View style={s.subjectRow}>
+            <Text style={s.subjectLabel}>Subject: </Text>
+            <TextInput
+              value={subject}
+              onChangeText={(t) => {
+                setSubject(t);
+                setSent(false);
+              }}
+              editable={!sent}
+              style={[s.subjectInput, sent && s.inputSent]}
+              accessibilityLabel={`${label} — editable subject`}
+            />
+          </View>
+        </View>
+      ) : (
+        meta
+      )}
 
       <TextInput
         value={body}
@@ -64,7 +88,10 @@ export const DraftBlock = ({
         {edited && !sent ? (
           <Pressable
             accessibilityRole="button"
-            onPress={() => setBody(initialBody)}
+            onPress={() => {
+              setBody(initialBody);
+              setSubject(initialSubject ?? '');
+            }}
             style={({ pressed }) => [s.secondaryBtn, pressed && { opacity: 0.6 }]}
           >
             <Text style={s.secondaryBtnText}>Reset</Text>
@@ -108,7 +135,7 @@ export const DraftBlock = ({
                 onPress={() => {
                   setConfirming(false);
                   setSent(true);
-                  onSend(body);
+                  onSend(body, subject);
                 }}
                 style={({ pressed }) => [s.primaryBtn, pressed && s.primaryBtnPressed]}
               >
@@ -144,6 +171,29 @@ const s = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: radius.sm,
+  },
+  contactLine: { fontFamily: font.family, fontSize: 12, color: colors.textMuted },
+  subjectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  subjectLabel: {
+    fontFamily: font.family,
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  subjectInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: colors.surface,
+    fontFamily: font.family,
+    fontSize: 13,
+    color: colors.text,
   },
   input: {
     borderWidth: 1,
